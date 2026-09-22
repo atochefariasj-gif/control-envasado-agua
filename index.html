@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Control de calidad y liberación de agua tratada - CPFO-16</title>
+  <!-- FontAwesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Estilos -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- Pantalla de Selección de Rol / Login -->
+  <div id="login-modal" class="modal-overlay">
+    <div class="modal-card">
+      <div class="modal-header">
+        <i class="fa-solid fa-faucet-drip"></i>
+        <h2>AGROMAR INDUSTRIAL</h2>
+        <p>Seleccione su rol de acceso (CPFO-16)</p>
+      </div>
+
+      <!-- Paso 1: Selección de Rol -->
+      <div id="role-selection" class="role-grid">
+        <button class="role-btn" onclick="seleccionarRol('operador')">
+          <i class="fa-solid fa-user-gear"></i>
+          <span>Operador</span>
+        </button>
+        <button class="role-btn" onclick="seleccionarRol('admin')">
+          <i class="fa-solid fa-user-shield"></i>
+          <span>Administrador</span>
+        </button>
+        <button class="role-btn" onclick="seleccionarRol('jefe')">
+          <i class="fa-solid fa-user-tie"></i>
+          <span>Jefe de Producción</span>
+        </button>
+      </div>
+
+<!-- Paso 2: Formularios de Login -->
+      <form id="form-login" class="login-form" style="display: none;" onsubmit="procesarLogin(event)">
+        <h3 id="login-title">Iniciar Sesión</h3>
+
+        <!-- Campo Usuario (Operador / Jefe) -->
+        <div class="form-group" id="group-usuario">
+          <label for="login-user" id="label-usuario">Usuario</label>
+          <select id="login-user">
+            <!-- Carga dinámica según el rol seleccionado -->
+          </select>
+        </div>
+
+        <!-- Campo Contraseña -->
+        <div class="form-group">
+          <label for="login-pass">Contraseña</label>
+          <input type="password" id="login-pass" placeholder="Ingrese su contraseña" required>
+        </div>
+
+        <div id="login-error" class="error-msg" style="display: none;">Contraseña incorrecta</div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="volverARoles()">Volver</button>
+          <button type="submit" class="btn btn-primary">Ingresar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Contenido Principal de la App -->
+  <div id="app-content" style="display: none;">
+
+    <!-- Encabezado / Navbar -->
+    <header class="navbar">
+      <div class="logo-area">
+        <i class="fa-solid fa-faucet-drip"></i>
+        <div>
+          <h1>AGROMAR INDUSTRIAL</h1>
+          <small>Control de calidad y liberación de agua tratada</small>
+        </div>
+      </div>
+      <div class="user-info">
+        <span id="user-display-tag" class="badge-role"></span>
+        <button class="btn-logout" onclick="cerrarSesion()"><i class="fa-solid fa-right-from-bracket"></i> Salir</button>
+      </div>
+    </header>
+
+    <div class="container">
+
+      <!-- Sección de Solicitudes de Nuevos Lotes -->
+      <section id="sec-solicitudes" class="card full-width" style="display: none;">
+        <h2><i class="fa-solid fa-clipboard-list"></i> Solicitudes de Nuevos Lotes</h2>
+        
+        <!-- Formulario exclusivo de Jefe de Producción -->
+        <form id="form-solicitud" class="form-row-solicitud" style="display: none;" onsubmit="crearSolicitudLote(event)">
+          <div class="form-group">
+            <label for="sol-cilindros">Cantidad / Cilindros Solicitados</label>
+            <input type="text" id="sol-cilindros" placeholder="Ej: OW001 al OW010 (10 cilindros)" required>
+          </div>
+          <div class="form-group">
+            <label for="sol-fecha">Fecha de Entrega Requerida</label>
+            <input type="date" id="sol-fecha" required>
+          </div>
+          <button type="submit" class="btn btn-primary btn-sol">
+            <i class="fa-solid fa-paper-plane"></i> Solicitar Lote
+          </button>
+        </form>
+
+        <!-- Lista de Solicitudes Activas -->
+        <div class="solicitudes-list" id="lista-solicitudes">
+          <!-- Carga dinámica -->
+        </div>
+      </section>
+
+      <!-- Tarjetas de Resumen (KPIs) -->
+      <section id="sec-kpis" class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-icon blue"><i class="fa-solid fa-glass-water-droplet"></i></div>
+          <div class="kpi-content">
+            <h3>Total Cilindros</h3>
+            <p id="kpi-total">0</p>
+          </div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-icon green"><i class="fa-solid fa-circle-check"></i></div>
+          <div class="kpi-content">
+            <h3>Conformes</h3>
+            <p id="kpi-conformes">0</p>
+          </div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-icon red"><i class="fa-solid fa-circle-xmark"></i></div>
+          <div class="kpi-content">
+            <h3>No Conformes</h3>
+            <p id="kpi-noconformes">0</p>
+          </div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-icon cyan"><i class="fa-solid fa-bolt"></i></div>
+          <div class="kpi-content">
+            <h3>Conductividad Prom.</h3>
+            <p id="kpi-cond">0.0</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Formulario + Gráfico (Operador y Admin/Jefe) -->
+      <main class="main-grid">
+
+        <!-- Formulario (Solo Operadores) -->
+        <section id="sec-formulario" class="card">
+          <h2><i class="fa-solid fa-pen-to-square"></i> Registro de Control (CPFO-16)</h2>
+          
+          <form id="form-agua">
+            <div class="form-row">
+              <div class="form-group">
+                <label for="procedencia">Procedencia</label>
+                <input type="text" id="procedencia" value="Cieneguillo" required readonly>
+              </div>
+              <div class="form-group">
+                <label for="responsable">Responsable de Turno</label>
+                <input type="text" id="responsable" readonly required>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="numCilindro"># Cilindro</label>
+                <select id="numCilindro" required>
+                  <option value="" disabled selected>-- Seleccione Cilindro --</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="fechaProd">Fecha de Producción</label>
+                <input type="date" id="fechaProd" required>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="conductividad">conductividad electrica a 25ºc (Max .10)</label>
+                <input type="number" id="conductividad" step="0.01" placeholder="Ingrese valor" required>
+              </div>
+              <div class="form-group">
+                <label for="dureza">Dureza total (ppm) <small>(Máx. 2.0)</small></label>
+                <input type="number" id="dureza" step="0.01" placeholder="0 - 2.0" required>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="ph">pH <small>(6.0 - 7.0)</small></label>
+                <input type="number" id="ph" step="0.01" placeholder="6.0 - 7.0" required>
+              </div>
+              <div class="form-group">
+                <label for="cloro">Cloro residual (ppm) <small>(< 0.01)</small></label>
+                <input type="number" id="cloro" step="0.001" placeholder="< 0.01" required>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="olor">Olor</label>
+                <select id="olor" required>
+                  <option value="CC">CC (Condición Conforme)</option>
+                  <option value="CN">CN (Condición No Conforme)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="color">Color</label>
+                <select id="color" required>
+                  <option value="CC">CC (Condición Conforme)</option>
+                  <option value="CN">CN (Condición No Conforme)</option>
+                </select>
+              </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary">
+              <i class="fa-solid fa-floppy-disk"></i> Registrar Cilindro
+            </button>
+          </form>
+        </section>
+
+        <!-- Panel Gráfico de Liberación -->
+        <section id="sec-grafico" class="card">
+          <h2><i class="fa-solid fa-chart-donut"></i> Estado de Liberación</h2>
+          <div class="chart-container">
+            <canvas id="qualityChart"></canvas>
+          </div>
+          <div class="doc-footer-info">
+            <p><strong>Producto:</strong> Agua de osmosis inversa</p>
+            <p><strong>Peso por cilindro:</strong> 200 Kg</p>
+          </div>
+        </section>
+
+      </main>
+
+      <!-- Tabla Histórica CPFO-16 -->
+      <section class="card full-width">
+        <div class="table-header">
+          <h2><i class="fa-solid fa-table"></i> Planilla de Liberación (CPFO-16)</h2>
+          <div class="table-actions">
+            <input type="text" id="searchInput" placeholder="Buscar # Cilindro...">
+            <button id="btnExport" class="btn btn-secondary">
+              <i class="fa-solid fa-file-excel"></i> Exportar CSV
+            </button>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th># Cilindro</th>
+                <th>Fecha Producción</th>
+                <th>Responsable</th>
+                <th>Conductividad<br><small>a 25ºc (Max .10)</small></th>
+                <th>Dureza Total<br><small>Máx. 2.0 ppm</small></th>
+                <th>pH<br><small>6.0 - 7.0</small></th>
+                <th>Cloro Residual<br><small>&lt; 0.01 ppm</small></th>
+                <th>Olor</th>
+                <th>Color</th>
+                <th>Conforme</th>
+                <th class="col-accion">Acción</th>
+              </tr>
+            </thead>
+            <tbody id="tabla-body">
+              <!-- Filas dinámicas -->
+            </tbody>
+            <tfoot>
+              <tr class="row-promedio">
+                <td colspan="3"><strong>Promedio</strong></td>
+                <td id="prom-cond">-</td>
+                <td id="prom-dureza">-</td>
+                <td id="prom-ph">-</td>
+                <td id="prom-cloro">-</td>
+                <td colspan="4"></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </section>
+
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
