@@ -8,6 +8,19 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Supabase JS Client -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- OneSignal SDK -->
+  <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+  <script>
+    window.OneSignalDeferred = window.OneSignalDeferred || [];
+    OneSignalDeferred.push(async function(OneSignal) {
+      await OneSignal.init({
+        appId: "e4c482e3-ae38-a20b-a791-bc7cb8e54a0d",
+        notifyButton: { enable: true },
+      });
+    });
+  </script>
   <!-- Estilos -->
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -38,7 +51,7 @@
         </button>
       </div>
 
-<!-- Paso 2: Formularios de Login -->
+      <!-- Paso 2: Formularios de Login -->
       <form id="form-login" class="login-form" style="display: none;" onsubmit="procesarLogin(event)">
         <h3 id="login-title">Iniciar Sesión</h3>
 
@@ -195,8 +208,8 @@
                 <input type="number" id="ph" step="0.01" placeholder="6.0 - 7.0" required>
               </div>
               <div class="form-group">
-                <label for="cloro">Cloro residual (ppm) <small>(< 0.01)</small></label>
-                <input type="number" id="cloro" step="0.001" placeholder="< 0.01" required>
+                <label for="cloro">Cloro residual (ppm) <small>(&lt; 0.01)</small></label>
+                <input type="number" id="cloro" step="0.001" placeholder="&lt; 0.01" required>
               </div>
             </div>
 
