@@ -13,7 +13,7 @@ const firebaseConfig = {
   measurementId: "G-DJ3LZ96XP7"
 };
 
-// Inicializar Firebase
+// Inicializar Firebase 
 firebase.initializeApp(firebaseConfig);
 
 // Inicializar el servicio de notificaciones
