@@ -346,3 +346,64 @@ th { background-color: #f1f5f9; font-weight: bold; }
 .badge-danger { background-color: var(--red-bg); color: var(--red-text); }
 
 .btn-delete { background: none; border: none; color: #ef4444; cursor: pointer; }
+/* Estado Lote Confirmado/Completado */
+.solicitud-card.completada, .lote-card.completado {
+  border-left: 6px solid #28a745 !important;
+  background-color: #eef9f1 !important;
+}
+
+.badge-completado {
+  background-color: #28a745;
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-weight: bold;
+  font-size: 0.85rem;
+}
+
+/* Modal Bitácora */
+.bitacora-content {
+  max-width: 650px;
+  width: 90%;
+}
+
+.bitacora-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 15px;
+}
+
+.bitacora-list {
+  max-height: 300px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.bitacora-item {
+  background: #f8f9fa;
+  border-left: 4px solid #17a2b8;
+  padding: 10px 12px;
+  border-radius: 4px;
+}
+
+.bitacora-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  color: #555;
+  margin-bottom: 5px;
+}
+
+.bitacora-usuario {
+  font-weight: bold;
+  color: #007bff;
+}
+
+.bitacora-texto {
+  font-size: 0.95rem;
+  color: #333;
+  white-space: pre-wrap;
+}
