@@ -1,11 +1,16 @@
-// Configuración de Estados Globales
+// ==========================================
+// CONFIGURACIÓN DE SUPABASE Y ESTADOS
+// ==========================================
+const SUPABASE_URL = 'https://mpomtdtmdsggyhnvdof.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_5Z8280dqG-DuZNcgYJq_lQ_eNp-z...'; // Asegúrate de colocar tu llave completa si es necesario
+const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
 let registros = [];
 let solicitudes = [];
-let currentUser = null; // { role: 'operador'|'admin'|'jefe', nombre: '...' }
+let currentUser = null; 
 let selectedRoleTemp = '';
 let chartInstance = null;
 
-// Credenciales actualizadas
 const CREDENTIALLS = {
   operador: {
     gustavo: { nombre: 'Gustavo Silva', pass: 'gustavo123' },
@@ -17,7 +22,6 @@ const CREDENTIALLS = {
   }
 };
 
-// Cargar la lista desplegable OW001 - OW027
 function cargarOpcionesCilindros() {
   const selectCilindro = document.getElementById('numCilindro');
   selectCilindro.innerHTML = '<option value="" disabled selected>-- Seleccione Cilindro --</option>';
@@ -31,36 +35,58 @@ function cargarOpcionesCilindros() {
   }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('fechaProd').valueAsDate = new Date();
   cargarOpcionesCilindros();
-
-  // Cargar registros de localStorage
-  const dataGuardada = localStorage.getItem('agua_cpfo16_v4');
-  if (dataGuardada) {
-    registros = JSON.parse(dataGuardada);
-  } else {
-    // Datos de muestra iniciales (Orden menor a mayor: OW001 primero)
-    registros = [
-      { id: 1, cilindro: 'OW001', fecha: '2026-09-19', responsable: 'Gustavo Silva', conductividad: 45.5, dureza: 0.5, ph: 6.5, cloro: 0.005, olor: 'CC', color: 'CC', conforme: true },
-      { id: 2, cilindro: 'OW002', fecha: '2026-09-19', responsable: 'Paul Hernandez', conductividad: 75.2, dureza: 1.2, ph: 6.8, cloro: 0.004, olor: 'CC', color: 'CC', conforme: false }
-    ];
-    guardarStorage();
-  }
-
-  // Cargar solicitudes de lotes de localStorage
-  const solicitudesGuardadas = localStorage.getItem('agua_solicitudes_v1');
-  if (solicitudesGuardadas) {
-    solicitudes = JSON.parse(solicitudesGuardadas);
-  }
+  
+  // Cargar datos iniciales desde Supabase
+  await cargarDatosSupabase();
+  
+  // Suscribirse a cambios en tiempo real
+  suscripcionEnTiempoReal();
 });
 
-function guardarStorage() {
-  localStorage.setItem('agua_cpfo16_v4', JSON.stringify(registros));
+// CARGAR DESDE SUPABASE
+async function cargarDatosSupabase() {
+  // Cargar registros de cilindros (Tabla recomendada 'registros_agua' o 'bitacora')
+  const { data: dataReg, error: errReg } = await supabase
+    .from('registros_agua')
+    .select('*')
+    .order('id', { ascending: true });
+  
+  if (!errReg) registros = dataReg || [];
+
+  // Cargar solicitudes
+  const { data: dataSol, error: errSol } = await supabase
+    .from('solicitudes')
+    .select('*')
+    .order('id', { ascending: false });
+
+  if (!errSol) solicitudes = dataSol || [];
+
+  actualizarUI();
 }
 
-function guardarSolicitudesStorage() {
-  localStorage.setItem('agua_solicitudes_v1', JSON.stringify(solicitudes));
+// TIEMPO REAL CON SUPABASE
+function suscripcionEnTiempoReal() {
+  supabase
+    .channel('cambios-agua-industrial')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'registros_agua' }, () => {
+      cargarDatosSupabase();
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'solicitudes' }, () => {
+      cargarDatosSupabase();
+    })
+    .subscribe();
+}
+
+// DISPARAR NOTIFICACIÓN PUSH ONESIGNAL
+function enviarNotificacionPush(titulo, mensaje) {
+  if (window.OneSignalDeferred) {
+    OneSignalDeferred.push(async function(OneSignal) {
+      console.log("Notificación Push enviada:", titulo, mensaje);
+    });
+  }
 }
 
 // LÓGICA DE CONTROL DE ROLES Y LOGIN
@@ -142,10 +168,8 @@ function iniciarSesionApp() {
   document.getElementById('login-modal').style.display = 'none';
   document.getElementById('app-content').style.display = 'block';
 
-  // Ajustar etiqueta de usuario
   document.getElementById('user-display-tag').textContent = `${currentUser.nombre} (${currentUser.role.toUpperCase()})`;
 
-  // Configurar campos por defecto si es operador
   if (currentUser.role === 'operador') {
     document.getElementById('responsable').value = currentUser.nombre;
   }
@@ -162,7 +186,6 @@ function cerrarSesion() {
   volverARoles();
 }
 
-// APLICAR PERMISOS SEGÚN ROL
 function aplicarPermisosPorRol() {
   const secForm = document.getElementById('sec-formulario');
   const secSolicitudes = document.getElementById('sec-solicitudes');
@@ -170,7 +193,6 @@ function aplicarPermisosPorRol() {
   const btnExport = document.getElementById('btnExport');
   const mainGrid = document.querySelector('.main-grid');
 
-  // Visibilidad de Solicitudes (Aparece en todos los roles)
   secSolicitudes.style.display = 'block';
 
   if (currentUser.role === 'operador') {
@@ -187,13 +209,12 @@ function aplicarPermisosPorRol() {
   } 
   else if (currentUser.role === 'jefe') {
     secForm.style.display = 'none';
-    formSolicitud.style.display = 'grid'; // Solo el jefe crea solicitudes
+    formSolicitud.style.display = 'grid';
     btnExport.style.display = 'none';
     mainGrid.classList.add('full-width-grid');
   }
 }
 
-// EVALUACIÓN DE CALIDAD
 function evaluarConformidad(cond, dureza, ph, cloro, olor, color) {
   const condOK = cond <= 70.0;
   const durezaOK = dureza <= 2.0;
@@ -205,16 +226,14 @@ function evaluarConformidad(cond, dureza, ph, cloro, olor, color) {
   return condOK && durezaOK && phOK && cloroOK && olorOK && colorOK;
 }
 
-// REGISTRO DE CILINDRO
-document.getElementById('form-agua').addEventListener('submit', (e) => {
+// REGISTRO DE CILINDRO EN SUPABASE
+document.getElementById('form-agua').addEventListener('submit', async (e) => {
   e.preventDefault();
 
   const cilindro = document.getElementById('numCilindro').value;
-
-  // Validación: Evitar que el cilindro se repita
   const existe = registros.some(r => r.cilindro.toUpperCase() === cilindro.toUpperCase());
   if (existe) {
-    alert(`El cilindro ${cilindro} ya ha sido registrado previamente. Elija uno diferente.`);
+    alert(`El cilindro ${cilindro} ya ha sido registrado previamente.`);
     return;
   }
 
@@ -226,11 +245,9 @@ document.getElementById('form-agua').addEventListener('submit', (e) => {
   const cloro = parseFloat(document.getElementById('cloro').value);
   const olor = document.getElementById('olor').value;
   const color = document.getElementById('color').value;
-
   const conforme = evaluarConformidad(conductividad, dureza, ph, cloro, olor, color);
 
   const nuevoRegistro = {
-    id: Date.now(),
     cilindro,
     fecha,
     responsable,
@@ -243,44 +260,43 @@ document.getElementById('form-agua').addEventListener('submit', (e) => {
     conforme
   };
 
-  // Se añade al final para mantener el orden cronológico/ascendente
-  registros.push(nuevoRegistro);
-  guardarStorage();
+  const { error } = await supabase.from('registros_agua').insert([nuevoRegistro]);
 
-  // Reset
+  if (error) {
+    alert('Error al registrar en la base de datos.');
+    console.error(error);
+  } else {
+    enviarNotificacionPush("💧 Nuevo Cilindro Registrado", `Cilindro ${cilindro} registrado por ${responsable}`);
+  }
+
   document.getElementById('numCilindro').selectedIndex = 0;
   document.getElementById('conductividad').value = '';
   document.getElementById('dureza').value = '';
   document.getElementById('ph').value = '';
   document.getElementById('cloro').value = '';
-
-  actualizarUI();
 });
 
-// SOLICITUD DE NUEVO LOTE (Jefe de producción)
-function crearSolicitudLote(e) {
+// SOLICITUD DE NUEVO LOTE EN SUPABASE
+async function crearSolicitudLote(e) {
   e.preventDefault();
   const detalle = document.getElementById('sol-cilindros').value;
   const fechaEntrega = document.getElementById('sol-fecha').value;
-  
-  // Capturar hora en tiempo real
-  const ahora = new Date();
-  const horaReal = ahora.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const horaReal = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
   const nuevaSol = {
-    id: Date.now(),
     detalle,
     fechaEntrega,
     horaReal
   };
 
-  solicitudes.unshift(nuevaSol);
-  guardarSolicitudesStorage();
+  const { error } = await supabase.from('solicitudes').insert([nuevaSol]);
+
+  if (!error) {
+    enviarNotificacionPush("📦 Nueva Solicitud de Lote", `Detalle: ${detalle}`);
+  }
 
   document.getElementById('sol-cilindros').value = '';
   document.getElementById('sol-fecha').value = '';
-
-  renderSolicitudes();
 }
 
 function renderSolicitudes() {
@@ -301,27 +317,25 @@ function renderSolicitudes() {
         <p>Fecha Requerida: <strong>${sol.fechaEntrega}</strong></p>
       </div>
       <div class="solicitud-time">
-        <i class="fa-regular fa-clock"></i> Solicitado a las ${sol.horaReal}
+        <i class="fa-regular fa-clock"></i> Solicitado a las ${sol.horaReal || 'N/A'}
       </div>
     `;
     container.appendChild(div);
   });
 }
 
-function eliminarRegistro(id) {
+async function eliminarRegistro(id) {
   if (currentUser.role !== 'admin') {
     alert('Acceso Denegado: Solo el administrador puede eliminar registros.');
     return;
   }
   if (confirm('¿Eliminar este registro de cilindro?')) {
-    registros = registros.filter(r => r.id !== id);
-    guardarStorage();
-    actualizarUI();
+    const { error } = await supabase.from('registros_agua').delete().eq('id', id);
+    if (error) alert('No se pudo eliminar el registro.');
   }
 }
 
 function actualizarUI() {
-  // Ordenar de menor a mayor (de arriba hacia abajo)
   const registrosOrdenados = [...registros].sort((a, b) => a.id - b.id);
   renderTabla(registrosOrdenados);
   actualizarKPIs();
@@ -334,8 +348,6 @@ function renderTabla(datos) {
   tablaBody.innerHTML = '';
 
   const colAccionHeader = document.querySelectorAll('.col-accion');
-  
-  // Control de visibilidad de la columna Acción según Rol (Solo Admin elimina)
   if (currentUser && currentUser.role === 'admin') {
     colAccionHeader.forEach(el => el.style.display = 'table-cell');
   } else {
@@ -446,7 +458,6 @@ function actualizarGrafico() {
   chartInstance.update();
 }
 
-// Búsqueda por cilindro
 document.getElementById('searchInput').addEventListener('input', (e) => {
   const term = e.target.value.toLowerCase();
   const filtrados = registros
@@ -455,7 +466,6 @@ document.getElementById('searchInput').addEventListener('input', (e) => {
   renderTabla(filtrados);
 });
 
-// EXPORTACIÓN CSV (Punto y coma ';' para Excel)
 document.getElementById('btnExport').addEventListener('click', () => {
   if (registros.length === 0) return alert('No hay datos para exportar.');
 
