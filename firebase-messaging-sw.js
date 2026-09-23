@@ -4,7 +4,7 @@ importScripts('https://www.gstatic.com/firebasejs/9.23.0/firebase-messaging-comp
 
 // Configuración extraída de tu consola de Firebase
 const firebaseConfig = {
-  apiKey: "AIzaSyBoAEj2D9wUNZrRFSmdxOM1scqm0urNFRo",
+  apiKey: "AIzaSyBoAEj2D9wUNZrRFSmdxOM1scqm0urNfRo",
   authDomain: "control-envasado-agua.firebaseapp.com",
   projectId: "control-envasado-agua",
   storageBucket: "control-envasado-agua.firebasestorage.app",
