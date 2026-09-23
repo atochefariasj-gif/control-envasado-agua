@@ -2,10 +2,20 @@
 // CONFIGURACIÓN DE SUPABASE Y ESTADOS
 // ==========================================
 const SUPABASE_URL = 'https://mpomtdtmdsggyhnvdof.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_5Z828OdqG-DuZNcgYJq_lQ_eMp-zeBk'; 
+// CORREGIDO: Se cambió 'Od' por '0d' (cero)
+const SUPABASE_KEY = 'sb_publishable_5Z8280dqG-DuZNcgYJq_lQ_eMp-zeBk'; 
 
-// Uso de _supabase para evitar conflictos con el objeto global de la CDN
-const _supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+// Inicialización segura de Supabase
+let _supabase = null;
+try {
+  if (window.supabase && typeof window.supabase.createClient === 'function') {
+    _supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  } else {
+    console.error("La librería de Supabase no se cargó correctamente desde el CDN.");
+  }
+} catch (err) {
+  console.error("Error al inicializar Supabase:", err);
+}
 
 let registros = [];
 let solicitudes = [];
@@ -28,6 +38,7 @@ const CREDENTIALLS = {
 // Cargar la lista desplegable OW001 - OW027
 function cargarOpcionesCilindros() {
   const selectCilindro = document.getElementById('numCilindro');
+  if (!selectCilindro) return;
   selectCilindro.innerHTML = '<option value="" disabled selected>-- Seleccione Cilindro --</option>';
   for (let i = 1; i <= 27; i++) {
     const num = i.toString().padStart(3, '0');
@@ -40,7 +51,9 @@ function cargarOpcionesCilindros() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  document.getElementById('fechaProd').valueAsDate = new Date();
+  const fechaProd = document.getElementById('fechaProd');
+  if (fechaProd) fechaProd.valueAsDate = new Date();
+  
   cargarOpcionesCilindros();
 
   // Cargar datos desde Supabase
@@ -52,25 +65,44 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // CARGAR DESDE SUPABASE
 async function cargarDatosSupabase() {
-  const { data: dataReg, error: errReg } = await _supabase
-    .from('registros_agua')
-    .select('*')
-    .order('id', { ascending: true });
-  
-  if (!errReg) registros = dataReg || [];
+  if (!_supabase) {
+    console.warn("Supabase no está disponible.");
+    return;
+  }
 
-  const { data: dataSol, error: errSol } = await _supabase
-    .from('solicitudes')
-    .select('*')
-    .order('id', { ascending: false });
+  try {
+    const { data: dataReg, error: errReg } = await _supabase
+      .from('registros_agua')
+      .select('*')
+      .order('id', { ascending: true });
+    
+    if (errReg) {
+      console.error("Error en registros_agua:", errReg.message);
+    } else {
+      registros = dataReg || [];
+    }
 
-  if (!errSol) solicitudes = dataSol || [];
+    const { data: dataSol, error: errSol } = await _supabase
+      .from('solicitudes')
+      .select('*')
+      .order('id', { ascending: false });
 
-  actualizarUI();
+    if (errSol) {
+      console.error("Error en solicitudes:", errSol.message);
+    } else {
+      solicitudes = dataSol || [];
+    }
+
+    actualizarUI();
+  } catch (err) {
+    console.error("Fallo de conexión con Supabase:", err);
+  }
 }
 
 // TIEMPO REAL CON SUPABASE
 function suscripcionEnTiempoReal() {
+  if (!_supabase) return;
+
   _supabase
     .channel('cambios-agua-industrial')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'registros_agua' }, () => {
@@ -196,25 +228,25 @@ function aplicarPermisosPorRol() {
   const btnExport = document.getElementById('btnExport');
   const mainGrid = document.querySelector('.main-grid');
 
-  secSolicitudes.style.display = 'block';
+  if (secSolicitudes) secSolicitudes.style.display = 'block';
 
   if (currentUser.role === 'operador') {
-    secForm.style.display = 'block';
-    formSolicitud.style.display = 'none';
-    btnExport.style.display = 'none';
-    mainGrid.classList.remove('full-width-grid');
+    if (secForm) secForm.style.display = 'block';
+    if (formSolicitud) formSolicitud.style.display = 'none';
+    if (btnExport) btnExport.style.display = 'none';
+    if (mainGrid) mainGrid.classList.remove('full-width-grid');
   } 
   else if (currentUser.role === 'admin') {
-    secForm.style.display = 'none';
-    formSolicitud.style.display = 'none';
-    btnExport.style.display = 'inline-flex';
-    mainGrid.classList.add('full-width-grid');
+    if (secForm) secForm.style.display = 'none';
+    if (formSolicitud) formSolicitud.style.display = 'none';
+    if (btnExport) btnExport.style.display = 'inline-flex';
+    if (mainGrid) mainGrid.classList.add('full-width-grid');
   } 
   else if (currentUser.role === 'jefe') {
-    secForm.style.display = 'none';
-    formSolicitud.style.display = 'grid';
-    btnExport.style.display = 'none';
-    mainGrid.classList.add('full-width-grid');
+    if (secForm) secForm.style.display = 'none';
+    if (formSolicitud) formSolicitud.style.display = 'grid';
+    if (btnExport) btnExport.style.display = 'none';
+    if (mainGrid) mainGrid.classList.add('full-width-grid');
   }
 }
 
@@ -231,60 +263,66 @@ function evaluarConformidad(cond, dureza, ph, cloro, olor, color) {
 }
 
 // REGISTRO DE CILINDRO
-document.getElementById('form-agua').addEventListener('submit', async (e) => {
-  e.preventDefault();
+const formAguaEl = document.getElementById('form-agua');
+if (formAguaEl) {
+  formAguaEl.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!_supabase) return alert("No hay conexión con la base de datos.");
 
-  const cilindro = document.getElementById('numCilindro').value;
+    const cilindro = document.getElementById('numCilindro').value;
 
-  const existe = registros.some(r => r.cilindro.toUpperCase() === cilindro.toUpperCase());
-  if (existe) {
-    alert(`El cilindro ${cilindro} ya ha sido registrado previamente. Elija uno diferente.`);
-    return;
-  }
+    const existe = registros.some(r => r.cilindro.toUpperCase() === cilindro.toUpperCase());
+    if (existe) {
+      alert(`El cilindro ${cilindro} ya ha sido registrado previamente. Elija uno diferente.`);
+      return;
+    }
 
-  const fecha = document.getElementById('fechaProd').value;
-  const responsable = document.getElementById('responsable').value;
-  const conductividad = parseFloat(document.getElementById('conductividad').value);
-  const dureza = parseFloat(document.getElementById('dureza').value);
-  const ph = parseFloat(document.getElementById('ph').value);
-  const cloro = parseFloat(document.getElementById('cloro').value);
-  const olor = document.getElementById('olor').value;
-  const color = document.getElementById('color').value;
+    const fecha = document.getElementById('fechaProd').value;
+    const responsable = document.getElementById('responsable').value;
+    const conductividad = parseFloat(document.getElementById('conductividad').value);
+    const dureza = parseFloat(document.getElementById('dureza').value);
+    const ph = parseFloat(document.getElementById('ph').value);
+    const cloro = parseFloat(document.getElementById('cloro').value);
+    const olor = document.getElementById('olor').value;
+    const color = document.getElementById('color').value;
 
-  const conforme = evaluarConformidad(conductividad, dureza, ph, cloro, olor, color);
+    const conforme = evaluarConformidad(conductividad, dureza, ph, cloro, olor, color);
 
-  const nuevoRegistro = {
-    cilindro,
-    fecha,
-    responsable,
-    conductividad,
-    dureza,
-    ph,
-    cloro,
-    olor,
-    color,
-    conforme
-  };
+    const nuevoRegistro = {
+      cilindro,
+      fecha,
+      responsable,
+      conductividad,
+      dureza,
+      ph,
+      cloro,
+      olor,
+      color,
+      conforme
+    };
 
-  const { error } = await _supabase.from('registros_agua').insert([nuevoRegistro]);
+    const { error } = await _supabase.from('registros_agua').insert([nuevoRegistro]);
 
-  if (error) {
-    alert('Error al registrar en la base de datos.');
-    console.error(error);
-  } else {
-    enviarNotificacionPush("💧 Nuevo Cilindro Registrado", `Cilindro ${cilindro} registrado por ${responsable}`);
-  }
+    if (error) {
+      alert('Error al registrar en la base de datos: ' + error.message);
+      console.error(error);
+    } else {
+      enviarNotificacionPush("💧 Nuevo Cilindro Registrado", `Cilindro ${cilindro} registrado por ${responsable}`);
+    }
 
-  document.getElementById('numCilindro').selectedIndex = 0;
-  document.getElementById('conductividad').value = '';
-  document.getElementById('dureza').value = '';
-  document.getElementById('ph').value = '';
-  document.getElementById('cloro').value = '';
-});
+    document.getElementById('numCilindro').selectedIndex = 0;
+    document.getElementById('conductividad').value = '';
+    document.getElementById('dureza').value = '';
+    document.getElementById('ph').value = '';
+    document.getElementById('cloro').value = '';
+  });
+}
 
 // SOLICITUD DE NUEVO LOTE (Jefe de producción)
 async function crearSolicitudLote(e) {
   e.preventDefault();
+  if (!_supabase) return alert("No hay conexión con la base de datos.");
+
   const detalle = document.getElementById('sol-cilindros').value;
   const fechaEntrega = document.getElementById('sol-fecha').value;
   
@@ -300,7 +338,7 @@ async function crearSolicitudLote(e) {
   const { error } = await _supabase.from('solicitudes').insert([nuevaSol]);
 
   if (error) {
-    alert('Error al crear la solicitud.');
+    alert('Error al crear la solicitud: ' + error.message);
     console.error(error);
   } else {
     enviarNotificacionPush("📦 Nueva Solicitud de Lote", `Detalle: ${detalle}`);
@@ -312,6 +350,7 @@ async function crearSolicitudLote(e) {
 
 function renderSolicitudes() {
   const container = document.getElementById('lista-solicitudes');
+  if (!container) return;
   container.innerHTML = '';
 
   if (solicitudes.length === 0) {
@@ -336,14 +375,15 @@ function renderSolicitudes() {
 }
 
 async function eliminarRegistro(id) {
-  if (currentUser.role !== 'admin') {
+  if (!_supabase) return;
+  if (!currentUser || currentUser.role !== 'admin') {
     alert('Acceso Denegado: Solo el administrador puede eliminar registros.');
     return;
   }
   if (confirm('¿Eliminar este registro de cilindro?')) {
     const { error } = await _supabase.from('registros_agua').delete().eq('id', id);
     if (error) {
-      alert('No se pudo eliminar el registro.');
+      alert('No se pudo eliminar el registro: ' + error.message);
       console.error(error);
     }
   }
@@ -359,6 +399,7 @@ function actualizarUI() {
 
 function renderTabla(datos) {
   const tablaBody = document.getElementById('tabla-body');
+  if (!tablaBody) return;
   tablaBody.innerHTML = '';
 
   const colAccionHeader = document.querySelectorAll('.col-accion');
@@ -412,22 +453,34 @@ function renderTabla(datos) {
 
 function calcularPromedios(datos) {
   const count = datos.length;
+  if (count === 0) return limpiarPromedios();
+
   const sumCond = datos.reduce((a, b) => a + b.conductividad, 0);
   const sumDureza = datos.reduce((a, b) => a + b.dureza, 0);
   const sumPh = datos.reduce((a, b) => a + b.ph, 0);
   const sumCloro = datos.reduce((a, b) => a + b.cloro, 0);
 
-  document.getElementById('prom-cond').textContent = (sumCond / count).toFixed(2);
-  document.getElementById('prom-dureza').textContent = (sumDureza / count).toFixed(2);
-  document.getElementById('prom-ph').textContent = (sumPh / count).toFixed(2);
-  document.getElementById('prom-cloro').textContent = (sumCloro / count).toFixed(3);
+  const elCond = document.getElementById('prom-cond');
+  const elDureza = document.getElementById('prom-dureza');
+  const elPh = document.getElementById('prom-ph');
+  const elCloro = document.getElementById('prom-cloro');
+
+  if (elCond) elCond.textContent = (sumCond / count).toFixed(2);
+  if (elDureza) elDureza.textContent = (sumDureza / count).toFixed(2);
+  if (elPh) elPh.textContent = (sumPh / count).toFixed(2);
+  if (elCloro) elCloro.textContent = (sumCloro / count).toFixed(3);
 }
 
 function limpiarPromedios() {
-  document.getElementById('prom-cond').textContent = '-';
-  document.getElementById('prom-dureza').textContent = '-';
-  document.getElementById('prom-ph').textContent = '-';
-  document.getElementById('prom-cloro').textContent = '-';
+  const elCond = document.getElementById('prom-cond');
+  const elDureza = document.getElementById('prom-dureza');
+  const elPh = document.getElementById('prom-ph');
+  const elCloro = document.getElementById('prom-cloro');
+
+  if (elCond) elCond.textContent = '-';
+  if (elDureza) elDureza.textContent = '-';
+  if (elPh) elPh.textContent = '-';
+  if (elCloro) elCloro.textContent = '-';
 }
 
 function actualizarKPIs() {
@@ -437,14 +490,21 @@ function actualizarKPIs() {
     ? (registros.reduce((a, b) => a + b.conductividad, 0) / registros.length).toFixed(1)
     : '0.0';
 
-  document.getElementById('kpi-total').textContent = registros.length;
-  document.getElementById('kpi-conformes').textContent = conformes;
-  document.getElementById('kpi-noconformes').textContent = noConformes;
-  document.getElementById('kpi-cond').textContent = promCond;
+  const kTotal = document.getElementById('kpi-total');
+  const kConformes = document.getElementById('kpi-conformes');
+  const kNoConformes = document.getElementById('kpi-noconformes');
+  const kCond = document.getElementById('kpi-cond');
+
+  if (kTotal) kTotal.textContent = registros.length;
+  if (kConformes) kConformes.textContent = conformes;
+  if (kNoConformes) kNoConformes.textContent = noConformes;
+  if (kCond) kCond.textContent = promCond;
 }
 
 function inicializarGrafico() {
-  const ctx = document.getElementById('qualityChart').getContext('2d');
+  const canvas = document.getElementById('qualityChart');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
   if (chartInstance) chartInstance.destroy();
 
   chartInstance = new Chart(ctx, {
@@ -474,41 +534,47 @@ function actualizarGrafico() {
 }
 
 // Búsqueda por cilindro
-document.getElementById('searchInput').addEventListener('input', (e) => {
-  const term = e.target.value.toLowerCase();
-  const filtrados = registros
-    .filter(r => r.cilindro.toLowerCase().includes(term))
-    .sort((a, b) => a.id - b.id);
-  renderTabla(filtrados);
-});
+const searchInput = document.getElementById('searchInput');
+if (searchInput) {
+  searchInput.addEventListener('input', (e) => {
+    const term = e.target.value.toLowerCase();
+    const filtrados = registros
+      .filter(r => r.cilindro.toLowerCase().includes(term))
+      .sort((a, b) => a.id - b.id);
+    renderTabla(filtrados);
+  });
+}
 
 // EXPORTACIÓN CSV
-document.getElementById('btnExport').addEventListener('click', () => {
-  if (registros.length === 0) return alert('No hay datos para exportar.');
+const btnExport = document.getElementById('btnExport');
+if (btnExport) {
+  btnExport.addEventListener('click', () => {
+    if (registros.length === 0) return alert('No hay datos para exportar.');
 
-  let csvContent = "\uFEFF"; 
-  csvContent += "# Cilindro;Fecha Produccion;Responsable;Conductividad;Dureza Total;pH;Cloro Residual;Olor;Color;Conforme\n";
+    let csvContent = "\uFEFF"; 
+    csvContent += "# Cilindro;Fecha Produccion;Responsable;Conductividad;Dureza Total;pH;Cloro Residual;Olor;Color;Conforme\n";
 
-  const datosOrdenados = [...registros].sort((a, b) => a.id - b.id);
+    const datosOrdenados = [...registros].sort((a, b) => a.id - b.id);
 
-  datosOrdenados.forEach(r => {
-    const condFormatted = r.conductividad.toString().replace('.', ',');
-    const durezaFormatted = r.dureza.toString().replace('.', ',');
-    const phFormatted = r.ph.toString().replace('.', ',');
-    const cloroFormatted = r.cloro.toString().replace('.', ',');
+    datosOrdenados.forEach(r => {
+      const condFormatted = r.conductividad.toString().replace('.', ',');
+      const durezaFormatted = r.dureza.toString().replace('.', ',');
+      const phFormatted = r.ph.toString().replace('.', ',');
+      const cloroFormatted = r.cloro.toString().replace('.', ',');
 
-    csvContent += `"${r.cilindro}";"${r.fecha}";"${r.responsable || '-'}";${condFormatted};${durezaFormatted};${phFormatted};${cloroFormatted};"${r.olor}";"${r.color}";"${r.conforme ? 'SI' : 'NO'}"\n`;
+      csvContent += `"${r.cilindro}";"${r.fecha}";"${r.responsable || '-'}";${condFormatted};${durezaFormatted};${phFormatted};${cloroFormatted};"${r.olor}";"${r.color}";"${r.conforme ? 'SI' : 'NO'}"\n`;
+    });
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    
+    link.setAttribute("href", url);
+    link.setAttribute("download", `CPFO-16_AguaTratada_${Date.now()}.csv`);
+    document.body.appendChild(link);
+    
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 100);
   });
-
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  
-  link.setAttribute("href", url);
-  link.setAttribute("download", `CPFO-16_AguaTratada_${Date.now()}.csv`);
-  document.body.appendChild(link);
-  
-  link.click();
-  document.body.removeChild(link);
-  setTimeout(() => URL.revokeObjectURL(url), 100);
-});
+}
