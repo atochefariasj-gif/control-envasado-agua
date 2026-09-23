@@ -128,33 +128,37 @@ async function solicitarPermisoNotificaciones(registration) {
 }
 
 // Guardar Token FCM en la tabla fcm_tokens de Supabase
-async function guardarTokenEnSupabase(token) {
+async function guardarTokenEnSupabase(tokenFCM) {
   try {
-    const usuarioActual = currentUser ? currentUser.nombre : 'Usuario Anónimo';
-    const tipoDispositivo = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ? 'Móvil / Tablet' : 'PC Desktop';
+    // 1. Verificar si el token ya existe en la tabla dispositivos_tokens
+    const { data: existente } = await supabaseClient
+      .from('dispositivos_tokens')
+      .select('fcm_token')
+      .eq('fcm_token', tokenFCM);
 
-    const { error } = await supabaseClient
-      .from('fcm_tokens')
-      .upsert(
-        { 
-          token: token, 
-          user_name: usuarioActual,
-          device_type: tipoDispositivo,
-          updated_at: new Date().toISOString()
-        }, 
-        { onConflict: 'token' }
-      );
+    // 2. Si no existe, lo insertamos
+    if (!existente || existente.length === 0) {
+      const { error } = await supabaseClient
+        .from('dispositivos_tokens')
+        .insert([
+          { 
+            fcm_token: tokenFCM, 
+            usuario: 'Operador_' + Math.floor(Math.random() * 1000) 
+          }
+        ]);
 
-    if (error) {
-      console.error('Error al guardar token FCM en Supabase:', error.message);
+      if (error) {
+        console.error('Error al insertar token en Supabase:', error.message);
+      } else {
+        console.log('✅ Token FCM registrado correctamente en Supabase.');
+      }
     } else {
-      console.log('✅ Token FCM guardado con éxito en Supabase.');
+      console.log('El dispositivo ya estaba registrado en Supabase.');
     }
   } catch (err) {
-    console.error('Excepción al guardar token FCM:', err);
+    console.error('Error guardando token:', err);
   }
 }
-
 // ==========================================
 // 2. CONEXIÓN Y ACCIONES SUPABASE (CRUD)
 // ==========================================
