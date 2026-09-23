@@ -2,8 +2,10 @@
 // CONFIGURACIÓN DE SUPABASE Y ESTADOS
 // ==========================================
 const SUPABASE_URL = 'https://mpomtdtmdsggyhnvdof.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_5Z8280dqG-DuZNcgYJq_lQ_eNp-z...'; // Asegúrate de colocar tu llave completa si es necesario
-const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const SUPABASE_KEY = 'sb_publishable_5Z828OdqG-DuZNcgYJq_lQ_eMp-zeBk'; 
+
+// Uso de _supabase para evitar conflictos con el objeto global de la CDN
+const _supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 let registros = [];
 let solicitudes = [];
@@ -11,6 +13,7 @@ let currentUser = null;
 let selectedRoleTemp = '';
 let chartInstance = null;
 
+// Credenciales actualizadas
 const CREDENTIALLS = {
   operador: {
     gustavo: { nombre: 'Gustavo Silva', pass: 'gustavo123' },
@@ -22,6 +25,7 @@ const CREDENTIALLS = {
   }
 };
 
+// Cargar la lista desplegable OW001 - OW027
 function cargarOpcionesCilindros() {
   const selectCilindro = document.getElementById('numCilindro');
   selectCilindro.innerHTML = '<option value="" disabled selected>-- Seleccione Cilindro --</option>';
@@ -38,26 +42,24 @@ function cargarOpcionesCilindros() {
 document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('fechaProd').valueAsDate = new Date();
   cargarOpcionesCilindros();
-  
-  // Cargar datos iniciales desde Supabase
+
+  // Cargar datos desde Supabase
   await cargarDatosSupabase();
-  
+
   // Suscribirse a cambios en tiempo real
   suscripcionEnTiempoReal();
 });
 
 // CARGAR DESDE SUPABASE
 async function cargarDatosSupabase() {
-  // Cargar registros de cilindros (Tabla recomendada 'registros_agua' o 'bitacora')
-  const { data: dataReg, error: errReg } = await supabase
+  const { data: dataReg, error: errReg } = await _supabase
     .from('registros_agua')
     .select('*')
     .order('id', { ascending: true });
   
   if (!errReg) registros = dataReg || [];
 
-  // Cargar solicitudes
-  const { data: dataSol, error: errSol } = await supabase
+  const { data: dataSol, error: errSol } = await _supabase
     .from('solicitudes')
     .select('*')
     .order('id', { ascending: false });
@@ -69,7 +71,7 @@ async function cargarDatosSupabase() {
 
 // TIEMPO REAL CON SUPABASE
 function suscripcionEnTiempoReal() {
-  supabase
+  _supabase
     .channel('cambios-agua-industrial')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'registros_agua' }, () => {
       cargarDatosSupabase();
@@ -186,6 +188,7 @@ function cerrarSesion() {
   volverARoles();
 }
 
+// APLICAR PERMISOS SEGÚN ROL
 function aplicarPermisosPorRol() {
   const secForm = document.getElementById('sec-formulario');
   const secSolicitudes = document.getElementById('sec-solicitudes');
@@ -215,6 +218,7 @@ function aplicarPermisosPorRol() {
   }
 }
 
+// EVALUACIÓN DE CALIDAD
 function evaluarConformidad(cond, dureza, ph, cloro, olor, color) {
   const condOK = cond <= 70.0;
   const durezaOK = dureza <= 2.0;
@@ -226,14 +230,15 @@ function evaluarConformidad(cond, dureza, ph, cloro, olor, color) {
   return condOK && durezaOK && phOK && cloroOK && olorOK && colorOK;
 }
 
-// REGISTRO DE CILINDRO EN SUPABASE
+// REGISTRO DE CILINDRO
 document.getElementById('form-agua').addEventListener('submit', async (e) => {
   e.preventDefault();
 
   const cilindro = document.getElementById('numCilindro').value;
+
   const existe = registros.some(r => r.cilindro.toUpperCase() === cilindro.toUpperCase());
   if (existe) {
-    alert(`El cilindro ${cilindro} ya ha sido registrado previamente.`);
+    alert(`El cilindro ${cilindro} ya ha sido registrado previamente. Elija uno diferente.`);
     return;
   }
 
@@ -245,6 +250,7 @@ document.getElementById('form-agua').addEventListener('submit', async (e) => {
   const cloro = parseFloat(document.getElementById('cloro').value);
   const olor = document.getElementById('olor').value;
   const color = document.getElementById('color').value;
+
   const conforme = evaluarConformidad(conductividad, dureza, ph, cloro, olor, color);
 
   const nuevoRegistro = {
@@ -260,7 +266,7 @@ document.getElementById('form-agua').addEventListener('submit', async (e) => {
     conforme
   };
 
-  const { error } = await supabase.from('registros_agua').insert([nuevoRegistro]);
+  const { error } = await _supabase.from('registros_agua').insert([nuevoRegistro]);
 
   if (error) {
     alert('Error al registrar en la base de datos.');
@@ -276,12 +282,14 @@ document.getElementById('form-agua').addEventListener('submit', async (e) => {
   document.getElementById('cloro').value = '';
 });
 
-// SOLICITUD DE NUEVO LOTE EN SUPABASE
+// SOLICITUD DE NUEVO LOTE (Jefe de producción)
 async function crearSolicitudLote(e) {
   e.preventDefault();
   const detalle = document.getElementById('sol-cilindros').value;
   const fechaEntrega = document.getElementById('sol-fecha').value;
-  const horaReal = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  
+  const ahora = new Date();
+  const horaReal = ahora.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
   const nuevaSol = {
     detalle,
@@ -289,9 +297,12 @@ async function crearSolicitudLote(e) {
     horaReal
   };
 
-  const { error } = await supabase.from('solicitudes').insert([nuevaSol]);
+  const { error } = await _supabase.from('solicitudes').insert([nuevaSol]);
 
-  if (!error) {
+  if (error) {
+    alert('Error al crear la solicitud.');
+    console.error(error);
+  } else {
     enviarNotificacionPush("📦 Nueva Solicitud de Lote", `Detalle: ${detalle}`);
   }
 
@@ -330,8 +341,11 @@ async function eliminarRegistro(id) {
     return;
   }
   if (confirm('¿Eliminar este registro de cilindro?')) {
-    const { error } = await supabase.from('registros_agua').delete().eq('id', id);
-    if (error) alert('No se pudo eliminar el registro.');
+    const { error } = await _supabase.from('registros_agua').delete().eq('id', id);
+    if (error) {
+      alert('No se pudo eliminar el registro.');
+      console.error(error);
+    }
   }
 }
 
@@ -348,6 +362,7 @@ function renderTabla(datos) {
   tablaBody.innerHTML = '';
 
   const colAccionHeader = document.querySelectorAll('.col-accion');
+  
   if (currentUser && currentUser.role === 'admin') {
     colAccionHeader.forEach(el => el.style.display = 'table-cell');
   } else {
@@ -458,6 +473,7 @@ function actualizarGrafico() {
   chartInstance.update();
 }
 
+// Búsqueda por cilindro
 document.getElementById('searchInput').addEventListener('input', (e) => {
   const term = e.target.value.toLowerCase();
   const filtrados = registros
@@ -466,6 +482,7 @@ document.getElementById('searchInput').addEventListener('input', (e) => {
   renderTabla(filtrados);
 });
 
+// EXPORTACIÓN CSV
 document.getElementById('btnExport').addEventListener('click', () => {
   if (registros.length === 0) return alert('No hay datos para exportar.');
 
