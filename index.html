@@ -3,25 +3,29 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Control de calidad y liberación de agua tratada - CPFO-16</title>
-  <!-- FontAwesome -->
+  <title>Control de Calidad y Liberación de Agua Tratada - CPFO-16</title>
+
+  <!-- PWA Manifest & Meta -->
+  <link rel="manifest" href="./manifest.json">
+  <meta name="theme-color" content="#007bff">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="./icon-192.png">
+
+  <!-- FontAwesome Icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <!-- Supabase JS Client -->
+
+  <!-- 1. Supabase Client Library -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <!-- OneSignal SDK -->
-  <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
-  <script>
-    window.OneSignalDeferred = window.OneSignalDeferred || [];
-    OneSignalDeferred.push(async function(OneSignal) {
-      await OneSignal.init({
-        appId: "e4c482e3-ae38-a20b-a791-bc7cb8e54a0d",
-        notifyButton: { enable: true },
-      });
-    });
-  </script>
-  <!-- Estilos -->
+
+  <!-- 2. Firebase SDKs (App & Messaging) -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-messaging-compat.js"></script>
+
+  <!-- Estilos de la aplicación -->
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -90,6 +94,9 @@
           <h1>AGROMAR INDUSTRIAL</h1>
           <small>Control de calidad y liberación de agua tratada</small>
         </div>
+        <button class="btn btn-info" onclick="abrirBitacora()">
+          📋 Bitácora / Observaciones
+        </button>
       </div>
       <div class="user-info">
         <span id="user-display-tag" class="badge-role"></span>
@@ -102,7 +109,7 @@
       <!-- Sección de Solicitudes de Nuevos Lotes -->
       <section id="sec-solicitudes" class="card full-width" style="display: none;">
         <h2><i class="fa-solid fa-clipboard-list"></i> Solicitudes de Nuevos Lotes</h2>
-        
+
         <!-- Formulario exclusivo de Jefe de Producción -->
         <form id="form-solicitud" class="form-row-solicitud" style="display: none;" onsubmit="crearSolicitudLote(event)">
           <div class="form-group">
@@ -120,7 +127,7 @@
 
         <!-- Lista de Solicitudes Activas -->
         <div class="solicitudes-list" id="lista-solicitudes">
-          <!-- Carga dinámica -->
+          <!-- Carga dinámica desde Supabase -->
         </div>
       </section>
 
@@ -193,11 +200,11 @@
 
             <div class="form-row">
               <div class="form-group">
-                <label for="conductividad">conductividad electrica a 25ºc (Max .10)</label>
+                <label for="conductividad">Conductividad Eléctrica a 25ºc (Máx. 10)</label>
                 <input type="number" id="conductividad" step="0.01" placeholder="Ingrese valor" required>
               </div>
               <div class="form-group">
-                <label for="dureza">Dureza total (ppm) <small>(Máx. 2.0)</small></label>
+                <label for="dureza">Dureza Total (ppm) <small>(Máx. 2.0)</small></label>
                 <input type="number" id="dureza" step="0.01" placeholder="0 - 2.0" required>
               </div>
             </div>
@@ -208,8 +215,8 @@
                 <input type="number" id="ph" step="0.01" placeholder="6.0 - 7.0" required>
               </div>
               <div class="form-group">
-                <label for="cloro">Cloro residual (ppm) <small>(&lt; 0.01)</small></label>
-                <input type="number" id="cloro" step="0.001" placeholder="&lt; 0.01" required>
+                <label for="cloro">Cloro Residual (ppm) <small>(&lt; 0.01)</small></label>
+                <input type="number" id="cloro" step="0.001" placeholder="< 0.01" required>
               </div>
             </div>
 
@@ -238,12 +245,12 @@
 
         <!-- Panel Gráfico de Liberación -->
         <section id="sec-grafico" class="card">
-          <h2><i class="fa-solid fa-chart-donut"></i> Estado de Liberación</h2>
+          <h2><i class="fa-solid fa-chart-pie"></i> Estado de Liberación</h2>
           <div class="chart-container">
             <canvas id="qualityChart"></canvas>
           </div>
           <div class="doc-footer-info">
-            <p><strong>Producto:</strong> Agua de osmosis inversa</p>
+            <p><strong>Producto:</strong> Agua de ósmosis inversa</p>
             <p><strong>Peso por cilindro:</strong> 200 Kg</p>
           </div>
         </section>
@@ -269,7 +276,7 @@
                 <th># Cilindro</th>
                 <th>Fecha Producción</th>
                 <th>Responsable</th>
-                <th>Conductividad<br><small>a 25ºc (Max .10)</small></th>
+                <th>Conductividad<br><small>a 25ºc (Máx. 10)</small></th>
                 <th>Dureza Total<br><small>Máx. 2.0 ppm</small></th>
                 <th>pH<br><small>6.0 - 7.0</small></th>
                 <th>Cloro Residual<br><small>&lt; 0.01 ppm</small></th>
@@ -280,7 +287,7 @@
               </tr>
             </thead>
             <tbody id="tabla-body">
-              <!-- Filas dinámicas -->
+              <!-- Filas dinámicas desde Supabase -->
             </tbody>
             <tfoot>
               <tr class="row-promedio">
@@ -299,6 +306,38 @@
     </div>
   </div>
 
+  <!-- MODAL DE BITÁCORA Y OBSERVACIONES -->
+  <div id="modal-bitacora" class="modal-overlay" style="display: none;">
+    <div class="modal-content bitacora-content">
+      <div class="modal-header">
+        <h2>📋 Bitácora de Observaciones y Sugerencias</h2>
+        <button class="btn-close" onclick="cerrarBitacora()">✕</button>
+      </div>
+
+      <!-- Formulario para agregar nuevo reporte -->
+      <form onsubmit="agregarObservacionBitacora(event)" class="bitacora-form">
+        <div class="form-group">
+          <label for="bitacora-texto">Nuevo Reporte / Observación:</label>
+          <textarea id="bitacora-texto" rows="3" placeholder="Escriba su observación, sugerencia o reporte de turno..." required></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">➕ Publicar Observación</button>
+      </form>
+
+      <hr>
+
+      <!-- Lista de registros de la bitácora -->
+      <h3>Historial de Registros</h3>
+      <div id="lista-bitacora" class="bitacora-list">
+        <!-- Se carga dinámicamente desde Supabase -->
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn btn-secondary" onclick="cerrarBitacora()">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Script principal de la lógica -->
   <script src="script.js"></script>
 </body>
 </html>
