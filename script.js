@@ -6,7 +6,7 @@ const SUPABASE_KEY = 'sb_publishable_5Z828OdqG-DuZNcgYJq_lQ_eMp-zeBk';
 
 // Crear el cliente de Supabase
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-
+ 
 // Configuración de Firebase para Push Notifications (SDK Compat v9)
 const firebaseConfig = {
   apiKey: "AIzaSyBoAEj2D9wUNZrRFSmdxOM1scqm0urNFRo",
