@@ -1,29 +1,43 @@
 // ==========================================
-// CONFIGURACIÓN DE SUPABASE Y ESTADOS
+// 1. CONFIGURACIÓN E INICIALIZACIÓN DE SUPABASE Y FIREBASE
 // ==========================================
-const SUPABASE_URL = 'https://mpomtdtmdsggyhnvdof.supabase.co';
-// CORREGIDO: Se cambió 'Od' por '0d' (cero)
-const SUPABASE_KEY = 'sb_publishable_5Z8280dqG-DuZNcgYJq_lQ_eMp-zeBk'; 
+const SUPABASE_URL = 'https://mpomtdtmdsggybhnvdof.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_5Z828OdqG-DuZNcgYJq_lQ_eMp-zeBk';
 
-// Inicialización segura de Supabase
-let _supabase = null;
-try {
-  if (window.supabase && typeof window.supabase.createClient === 'function') {
-    _supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-  } else {
-    console.error("La librería de Supabase no se cargó correctamente desde el CDN.");
-  }
-} catch (err) {
-  console.error("Error al inicializar Supabase:", err);
+// Crear el cliente de Supabase
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// Configuración de Firebase para Push Notifications (SDK Compat v9)
+const firebaseConfig = {
+  apiKey: "AIzaSyBoAEj2D9wUNZrRFSmdxOM1scqm0urNFRo",
+  authDomain: "control-envasado-agua.firebaseapp.com",
+  projectId: "control-envasado-agua",
+  storageBucket: "control-envasado-agua.firebasestorage.app",
+  messagingSenderId: "337600183929",
+  appId: "1:337600183929:web:1f019b401521161a2e1ea8",
+  measurementId: "G-DJ3LZ96XP7"
+};
+
+// Clave pública VAPID de Firebase Cloud Messaging
+const VAPID_KEY = "BF_3H1pli2NFqoTH2corhZst279V0S3f1Hhoyw5tEQb9cNKmNEQMJzhceaYtQT5LWVfB8upVOggBhiaG7Ikz6s8";
+
+let messaging = null;
+
+// Inicializar Firebase Messaging si es compatible
+if (typeof firebase !== 'undefined' && firebase.messaging.isSupported()) {
+  firebase.initializeApp(firebaseConfig);
+  messaging = firebase.messaging();
 }
 
+// Estados globales de la aplicación
 let registros = [];
 let solicitudes = [];
-let currentUser = null; 
+let bitacoraRegistros = [];
+let currentUser = null; // { role: 'operador'|'admin'|'jefe', nombre: '...' }
 let selectedRoleTemp = '';
 let chartInstance = null;
 
-// Credenciales actualizadas
+// Credenciales
 const CREDENTIALLS = {
   operador: {
     gustavo: { nombre: 'Gustavo Silva', pass: 'gustavo123' },
@@ -35,10 +49,9 @@ const CREDENTIALLS = {
   }
 };
 
-// Cargar la lista desplegable OW001 - OW027
+// Cargar opciones OW001 - OW027
 function cargarOpcionesCilindros() {
   const selectCilindro = document.getElementById('numCilindro');
-  if (!selectCilindro) return;
   selectCilindro.innerHTML = '<option value="" disabled selected>-- Seleccione Cilindro --</option>';
   for (let i = 1; i <= 27; i++) {
     const num = i.toString().padStart(3, '0');
@@ -51,79 +64,148 @@ function cargarOpcionesCilindros() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  const fechaProd = document.getElementById('fechaProd');
-  if (fechaProd) fechaProd.valueAsDate = new Date();
-  
+  document.getElementById('fechaProd').valueAsDate = new Date();
   cargarOpcionesCilindros();
 
-  // Cargar datos desde Supabase
-  await cargarDatosSupabase();
+  // Registrar Service Worker para PWA y Notificaciones Push
+  registrarServiceWorkerYNotificaciones();
 
-  // Suscribirse a cambios en tiempo real
-  suscripcionEnTiempoReal();
+  // Cargar datos iniciales desde Supabase
+  await cargarRegistrosDesdeSupabase();
+  await cargarSolicitudesDesdeSupabase();
+  await cargarBitacoraDesdeSupabase();
+
+  // Suscribirse a cambios en tiempo real (Realtime)
+  suscribirSupabaseRealtime();
 });
 
-// CARGAR DESDE SUPABASE
-async function cargarDatosSupabase() {
-  if (!_supabase) {
-    console.warn("Supabase no está disponible.");
-    return;
-  }
-
-  try {
-    const { data: dataReg, error: errReg } = await _supabase
-      .from('registros_agua')
-      .select('*')
-      .order('id', { ascending: true });
-    
-    if (errReg) {
-      console.error("Error en registros_agua:", errReg.message);
-    } else {
-      registros = dataReg || [];
-    }
-
-    const { data: dataSol, error: errSol } = await _supabase
-      .from('solicitudes')
-      .select('*')
-      .order('id', { ascending: false });
-
-    if (errSol) {
-      console.error("Error en solicitudes:", errSol.message);
-    } else {
-      solicitudes = dataSol || [];
-    }
-
-    actualizarUI();
-  } catch (err) {
-    console.error("Fallo de conexión con Supabase:", err);
+// ==========================================
+// 1.1 SERVICE WORKER & NOTIFICACIONES PUSH
+// ==========================================
+function registrarServiceWorkerYNotificaciones() {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./firebase-messaging-sw.js')
+      .then((registration) => {
+        console.log('Service Worker registrado correctamente:', registration.scope);
+        solicitarPermisoNotificaciones(registration);
+      })
+      .catch((err) => {
+        console.error('Error al registrar Service Worker:', err);
+      });
   }
 }
 
-// TIEMPO REAL CON SUPABASE
-function suscripcionEnTiempoReal() {
-  if (!_supabase) return;
+async function solicitarPermisoNotificaciones(registration) {
+  if (!messaging) return;
 
-  _supabase
-    .channel('cambios-agua-industrial')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'registros_agua' }, () => {
-      cargarDatosSupabase();
-    })
+  try {
+    const permission = await Notification.requestPermission();
+    if (permission === 'granted') {
+      const token = await messaging.getToken({
+        serviceWorkerRegistration: registration,
+        vapidKey: VAPID_KEY
+      });
+      console.log('FCM Token de Notificaciones Push:', token);
+    } else {
+      console.warn('Permiso de notificaciones denegado.');
+    }
+  } catch (err) {
+    console.error('Error obteniendo token FCM:', err);
+  }
+
+  // Escuchar notificaciones en primer plano
+  messaging.onMessage((payload) => {
+    console.log('Notificación recibida en primer plano:', payload);
+    const title = payload.notification?.title || 'Nuevo aviso de producción';
+    const body = payload.notification?.body || '';
+    alert(`🔔 ${title}\n${body}`);
+  });
+}
+
+// ==========================================
+// 2. CONEXIÓN Y ACCIONES SUPABASE (CRUD)
+// ==========================================
+
+// --- REGISTROS DE CILINDROS ---
+async function cargarRegistrosDesdeSupabase() {
+  const { data, error } = await supabaseClient
+    .from('solicitudes')
+    .select('*')
+    .eq('producto', 'Registro_CPFO16')
+    .order('created_at', { ascending: true });
+
+  if (!error && data) {
+    registros = data.map(item => ({
+      id: item.id,
+      cilindro: item.id,
+      fecha: item.fecha_completado || item.created_at.split('T')[0],
+      responsable: item.creado_por,
+      conductividad: parseFloat(item.cantidad || 0),
+      dureza: 0.5,
+      ph: 6.8,
+      cloro: 0.005,
+      olor: 'CC',
+      color: 'CC',
+      conforme: item.estado === 'Conforme'
+    }));
+    actualizarUI();
+  }
+}
+
+// --- SOLICITUDES DE LOTES ---
+async function cargarSolicitudesDesdeSupabase() {
+  const { data, error } = await supabaseClient
+    .from('solicitudes')
+    .select('*')
+    .neq('producto', 'Registro_CPFO16')
+    .order('created_at', { ascending: false });
+
+  if (!error && data) {
+    solicitudes = data;
+    renderSolicitudes();
+  }
+}
+
+// --- BITÁCORA ---
+async function cargarBitacoraDesdeSupabase() {
+  const { data, error } = await supabaseClient
+    .from('bitacora')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (!error && data) {
+    bitacoraRegistros = data.map(b => ({
+      id: b.id,
+      usuario: b.usuario,
+      rol: b.rol,
+      texto: b.texto,
+      fechaHora: new Date(b.created_at).toLocaleString('es-PE')
+    }));
+    renderizarBitacora();
+  }
+}
+
+// Realtime Subscriptions
+function suscribirSupabaseRealtime() {
+  supabaseClient
+    .channel('public:solicitudes')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'solicitudes' }, () => {
-      cargarDatosSupabase();
+      cargarRegistrosDesdeSupabase();
+      cargarSolicitudesDesdeSupabase();
+    })
+    .subscribe();
+
+  supabaseClient
+    .channel('public:bitacora')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'bitacora' }, () => {
+      cargarBitacoraDesdeSupabase();
     })
     .subscribe();
 }
 
-// DISPARAR NOTIFICACIÓN PUSH ONESIGNAL
-function enviarNotificacionPush(titulo, mensaje) {
-  if (window.OneSignalDeferred) {
-    OneSignalDeferred.push(async function(OneSignal) {
-      console.log("Notificación Push enviada:", titulo, mensaje);
-    });
-  }
-}
-
-// LÓGICA DE CONTROL DE ROLES Y LOGIN
+// ==========================================
+// 3. LÓGICA DE ROLES Y LOGIN
+// ==========================================
 function seleccionarRol(rol) {
   selectedRoleTemp = rol;
   document.getElementById('role-selection').style.display = 'none';
@@ -201,7 +283,6 @@ function mostrarErrorLogin() {
 function iniciarSesionApp() {
   document.getElementById('login-modal').style.display = 'none';
   document.getElementById('app-content').style.display = 'block';
-
   document.getElementById('user-display-tag').textContent = `${currentUser.nombre} (${currentUser.role.toUpperCase()})`;
 
   if (currentUser.role === 'operador') {
@@ -220,7 +301,6 @@ function cerrarSesion() {
   volverARoles();
 }
 
-// APLICAR PERMISOS SEGÚN ROL
 function aplicarPermisosPorRol() {
   const secForm = document.getElementById('sec-formulario');
   const secSolicitudes = document.getElementById('sec-solicitudes');
@@ -228,31 +308,33 @@ function aplicarPermisosPorRol() {
   const btnExport = document.getElementById('btnExport');
   const mainGrid = document.querySelector('.main-grid');
 
-  if (secSolicitudes) secSolicitudes.style.display = 'block';
+  secSolicitudes.style.display = 'block';
 
   if (currentUser.role === 'operador') {
-    if (secForm) secForm.style.display = 'block';
-    if (formSolicitud) formSolicitud.style.display = 'none';
-    if (btnExport) btnExport.style.display = 'none';
-    if (mainGrid) mainGrid.classList.remove('full-width-grid');
+    secForm.style.display = 'block';
+    formSolicitud.style.display = 'none';
+    btnExport.style.display = 'none';
+    mainGrid.classList.remove('full-width-grid');
   } 
   else if (currentUser.role === 'admin') {
-    if (secForm) secForm.style.display = 'none';
-    if (formSolicitud) formSolicitud.style.display = 'none';
-    if (btnExport) btnExport.style.display = 'inline-flex';
-    if (mainGrid) mainGrid.classList.add('full-width-grid');
+    secForm.style.display = 'none';
+    formSolicitud.style.display = 'none';
+    btnExport.style.display = 'inline-flex';
+    mainGrid.classList.add('full-width-grid');
   } 
   else if (currentUser.role === 'jefe') {
-    if (secForm) secForm.style.display = 'none';
-    if (formSolicitud) formSolicitud.style.display = 'grid';
-    if (btnExport) btnExport.style.display = 'none';
-    if (mainGrid) mainGrid.classList.add('full-width-grid');
+    secForm.style.display = 'none';
+    formSolicitud.style.display = 'grid';
+    btnExport.style.display = 'none';
+    mainGrid.classList.add('full-width-grid');
   }
 }
 
-// EVALUACIÓN DE CALIDAD
+// ==========================================
+// 4. EVALUACIÓN Y REGISTRO DE CILINDROS
+// ==========================================
 function evaluarConformidad(cond, dureza, ph, cloro, olor, color) {
-  const condOK = cond <= 70.0;
+  const condOK = cond <= 10.0;
   const durezaOK = dureza <= 2.0;
   const phOK = ph >= 6.0 && ph <= 7.0;
   const cloroOK = cloro < 0.01;
@@ -262,95 +344,82 @@ function evaluarConformidad(cond, dureza, ph, cloro, olor, color) {
   return condOK && durezaOK && phOK && cloroOK && olorOK && colorOK;
 }
 
-// REGISTRO DE CILINDRO
-const formAguaEl = document.getElementById('form-agua');
-if (formAguaEl) {
-  formAguaEl.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    if (!_supabase) return alert("No hay conexión con la base de datos.");
+document.getElementById('form-agua').addEventListener('submit', async (e) => {
+  e.preventDefault();
 
-    const cilindro = document.getElementById('numCilindro').value;
+  const cilindro = document.getElementById('numCilindro').value;
+  const existe = registros.some(r => r.cilindro.toUpperCase() === cilindro.toUpperCase());
+  if (existe) {
+    alert(`El cilindro ${cilindro} ya ha sido registrado previamente.`);
+    return;
+  }
 
-    const existe = registros.some(r => r.cilindro.toUpperCase() === cilindro.toUpperCase());
-    if (existe) {
-      alert(`El cilindro ${cilindro} ya ha sido registrado previamente. Elija uno diferente.`);
-      return;
+  const fecha = document.getElementById('fechaProd').value;
+  const responsable = document.getElementById('responsable').value;
+  const conductividad = parseFloat(document.getElementById('conductividad').value);
+  const dureza = parseFloat(document.getElementById('dureza').value);
+  const ph = parseFloat(document.getElementById('ph').value);
+  const cloro = parseFloat(document.getElementById('cloro').value);
+  const olor = document.getElementById('olor').value;
+  const color = document.getElementById('color').value;
+
+  const conforme = evaluarConformidad(conductividad, dureza, ph, cloro, olor, color);
+
+  // Guardar en Supabase
+  const { error } = await supabaseClient.from('solicitudes').insert([
+    {
+      id: cilindro,
+      producto: 'Registro_CPFO16',
+      cantidad: conductividad,
+      estado: conforme ? 'Conforme' : 'No Conforme',
+      creado_por: responsable,
+      fecha_completado: fecha
     }
+  ]);
 
-    const fecha = document.getElementById('fechaProd').value;
-    const responsable = document.getElementById('responsable').value;
-    const conductividad = parseFloat(document.getElementById('conductividad').value);
-    const dureza = parseFloat(document.getElementById('dureza').value);
-    const ph = parseFloat(document.getElementById('ph').value);
-    const cloro = parseFloat(document.getElementById('cloro').value);
-    const olor = document.getElementById('olor').value;
-    const color = document.getElementById('color').value;
-
-    const conforme = evaluarConformidad(conductividad, dureza, ph, cloro, olor, color);
-
-    const nuevoRegistro = {
-      cilindro,
-      fecha,
-      responsable,
-      conductividad,
-      dureza,
-      ph,
-      cloro,
-      olor,
-      color,
-      conforme
-    };
-
-    const { error } = await _supabase.from('registros_agua').insert([nuevoRegistro]);
-
-    if (error) {
-      alert('Error al registrar en la base de datos: ' + error.message);
-      console.error(error);
-    } else {
-      enviarNotificacionPush("💧 Nuevo Cilindro Registrado", `Cilindro ${cilindro} registrado por ${responsable}`);
-    }
+  if (!error) {
+    alert(`Cilindro ${cilindro} registrado con éxito.`);
+    await cargarRegistrosDesdeSupabase();
 
     document.getElementById('numCilindro').selectedIndex = 0;
     document.getElementById('conductividad').value = '';
     document.getElementById('dureza').value = '';
     document.getElementById('ph').value = '';
     document.getElementById('cloro').value = '';
-  });
-}
+  } else {
+    alert("Error al guardar en Supabase: " + error.message);
+  }
+});
 
-// SOLICITUD DE NUEVO LOTE (Jefe de producción)
+// ==========================================
+// 5. SOLICITUD Y CONFIRMACIÓN DE LOTES
+// ==========================================
 async function crearSolicitudLote(e) {
   e.preventDefault();
-  if (!_supabase) return alert("No hay conexión con la base de datos.");
-
   const detalle = document.getElementById('sol-cilindros').value;
   const fechaEntrega = document.getElementById('sol-fecha').value;
-  
-  const ahora = new Date();
-  const horaReal = ahora.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const idSol = 'LOTE-' + Date.now().toString().slice(-5);
 
-  const nuevaSol = {
-    detalle,
-    fechaEntrega,
-    horaReal
-  };
+  const { error } = await supabaseClient.from('solicitudes').insert([
+    {
+      id: idSol,
+      producto: detalle,
+      estado: 'Pendiente',
+      creado_por: currentUser.nombre,
+      fecha_completado: fechaEntrega
+    }
+  ]);
 
-  const { error } = await _supabase.from('solicitudes').insert([nuevaSol]);
-
-  if (error) {
-    alert('Error al crear la solicitud: ' + error.message);
-    console.error(error);
-  } else {
-    enviarNotificacionPush("📦 Nueva Solicitud de Lote", `Detalle: ${detalle}`);
+  if (!error) {
+    document.getElementById('sol-cilindros').value = '';
+    document.getElementById('sol-fecha').value = '';
+    await registrarEnBitacoraAutomático(`Nueva solicitud de lote creada: ${detalle}`);
+    await cargarSolicitudesDesdeSupabase();
   }
-
-  document.getElementById('sol-cilindros').value = '';
-  document.getElementById('sol-fecha').value = '';
 }
 
 function renderSolicitudes() {
   const container = document.getElementById('lista-solicitudes');
-  if (!container) return;
   container.innerHTML = '';
 
   if (solicitudes.length === 0) {
@@ -359,39 +428,67 @@ function renderSolicitudes() {
   }
 
   solicitudes.forEach(sol => {
+    const esOperador = currentUser && currentUser.role === 'operador';
+    const estaCompletado = sol.estado === 'Completado';
+
     const div = document.createElement('div');
-    div.className = 'solicitud-card';
-    div.innerHTML = `
+    div.className = `solicitud-card ${estaCompletado ? 'completada' : ''}`;
+    
+    let htmlContent = `
       <div class="solicitud-info">
-        <h4><i class="fa-solid fa-box"></i> ${sol.detalle}</h4>
-        <p>Fecha Requerida: <strong>${sol.fechaEntrega}</strong></p>
-      </div>
-      <div class="solicitud-time">
-        <i class="fa-regular fa-clock"></i> Solicitado a las ${sol.horaReal || 'N/A'}
+        <h4><i class="fa-solid fa-box"></i> ${sol.producto}</h4>
+        <p>ID Lote: <strong>${sol.id}</strong> | Requerido para: <strong>${sol.fecha_completado || '-'}</strong></p>
+        <p>Estado: ${estaCompletado ? '<span style="color: green; font-weight: bold;">✓ Completado y Confirmado</span>' : '<span style="color: orange; font-weight: bold;">Pendiente</span>'}</p>
       </div>
     `;
+
+    if (esOperador && !estaCompletado) {
+      htmlContent += `
+        <button class="btn btn-success" onclick="confirmarLote('${sol.id}')">
+          ✅ Confirmar Lote Completado
+        </button>
+      `;
+    }
+
+    div.innerHTML = htmlContent;
     container.appendChild(div);
   });
 }
 
+async function confirmarLote(idSolicitud) {
+  if (!confirm("¿Está seguro de marcar este lote como completado?")) return;
+
+  const { error } = await supabaseClient
+    .from('solicitudes')
+    .update({ 
+      estado: 'Completado', 
+      completado_por: currentUser.nombre 
+    })
+    .eq('id', idSolicitud);
+
+  if (!error) {
+    await registrarEnBitacoraAutomático(`El lote #${idSolicitud} fue completado y confirmado por ${currentUser.nombre}.`);
+    await cargarSolicitudesDesdeSupabase();
+    alert("¡El lote se ha marcado como completado correctamente!");
+  }
+}
+
 async function eliminarRegistro(id) {
-  if (!_supabase) return;
-  if (!currentUser || currentUser.role !== 'admin') {
+  if (currentUser.role !== 'admin') {
     alert('Acceso Denegado: Solo el administrador puede eliminar registros.');
     return;
   }
   if (confirm('¿Eliminar este registro de cilindro?')) {
-    const { error } = await _supabase.from('registros_agua').delete().eq('id', id);
-    if (error) {
-      alert('No se pudo eliminar el registro: ' + error.message);
-      console.error(error);
-    }
+    await supabaseClient.from('solicitudes').delete().eq('id', id);
+    await cargarRegistrosDesdeSupabase();
   }
 }
 
+// ==========================================
+// 6. RENDERIZADO TABLA, KPIS Y GRÁFICO
+// ==========================================
 function actualizarUI() {
-  const registrosOrdenados = [...registros].sort((a, b) => a.id - b.id);
-  renderTabla(registrosOrdenados);
+  renderTabla(registros);
   actualizarKPIs();
   actualizarGrafico();
   renderSolicitudes();
@@ -399,7 +496,6 @@ function actualizarUI() {
 
 function renderTabla(datos) {
   const tablaBody = document.getElementById('tabla-body');
-  if (!tablaBody) return;
   tablaBody.innerHTML = '';
 
   const colAccionHeader = document.querySelectorAll('.col-accion');
@@ -437,7 +533,7 @@ function renderTabla(datos) {
     if (currentUser && currentUser.role === 'admin') {
       htmlRow += `
         <td class="col-accion">
-          <button class="btn-delete" onclick="eliminarRegistro(${item.id})">
+          <button class="btn-delete" onclick="eliminarRegistro('${item.id}')">
             <i class="fa-solid fa-trash"></i>
           </button>
         </td>
@@ -453,34 +549,22 @@ function renderTabla(datos) {
 
 function calcularPromedios(datos) {
   const count = datos.length;
-  if (count === 0) return limpiarPromedios();
-
   const sumCond = datos.reduce((a, b) => a + b.conductividad, 0);
   const sumDureza = datos.reduce((a, b) => a + b.dureza, 0);
   const sumPh = datos.reduce((a, b) => a + b.ph, 0);
   const sumCloro = datos.reduce((a, b) => a + b.cloro, 0);
 
-  const elCond = document.getElementById('prom-cond');
-  const elDureza = document.getElementById('prom-dureza');
-  const elPh = document.getElementById('prom-ph');
-  const elCloro = document.getElementById('prom-cloro');
-
-  if (elCond) elCond.textContent = (sumCond / count).toFixed(2);
-  if (elDureza) elDureza.textContent = (sumDureza / count).toFixed(2);
-  if (elPh) elPh.textContent = (sumPh / count).toFixed(2);
-  if (elCloro) elCloro.textContent = (sumCloro / count).toFixed(3);
+  document.getElementById('prom-cond').textContent = (sumCond / count).toFixed(2);
+  document.getElementById('prom-dureza').textContent = (sumDureza / count).toFixed(2);
+  document.getElementById('prom-ph').textContent = (sumPh / count).toFixed(2);
+  document.getElementById('prom-cloro').textContent = (sumCloro / count).toFixed(3);
 }
 
 function limpiarPromedios() {
-  const elCond = document.getElementById('prom-cond');
-  const elDureza = document.getElementById('prom-dureza');
-  const elPh = document.getElementById('prom-ph');
-  const elCloro = document.getElementById('prom-cloro');
-
-  if (elCond) elCond.textContent = '-';
-  if (elDureza) elDureza.textContent = '-';
-  if (elPh) elPh.textContent = '-';
-  if (elCloro) elCloro.textContent = '-';
+  document.getElementById('prom-cond').textContent = '-';
+  document.getElementById('prom-dureza').textContent = '-';
+  document.getElementById('prom-ph').textContent = '-';
+  document.getElementById('prom-cloro').textContent = '-';
 }
 
 function actualizarKPIs() {
@@ -490,21 +574,14 @@ function actualizarKPIs() {
     ? (registros.reduce((a, b) => a + b.conductividad, 0) / registros.length).toFixed(1)
     : '0.0';
 
-  const kTotal = document.getElementById('kpi-total');
-  const kConformes = document.getElementById('kpi-conformes');
-  const kNoConformes = document.getElementById('kpi-noconformes');
-  const kCond = document.getElementById('kpi-cond');
-
-  if (kTotal) kTotal.textContent = registros.length;
-  if (kConformes) kConformes.textContent = conformes;
-  if (kNoConformes) kNoConformes.textContent = noConformes;
-  if (kCond) kCond.textContent = promCond;
+  document.getElementById('kpi-total').textContent = registros.length;
+  document.getElementById('kpi-conformes').textContent = conformes;
+  document.getElementById('kpi-noconformes').textContent = noConformes;
+  document.getElementById('kpi-cond').textContent = promCond;
 }
 
 function inicializarGrafico() {
-  const canvas = document.getElementById('qualityChart');
-  if (!canvas) return;
-  const ctx = canvas.getContext('2d');
+  const ctx = document.getElementById('qualityChart').getContext('2d');
   if (chartInstance) chartInstance.destroy();
 
   chartInstance = new Chart(ctx, {
@@ -533,48 +610,94 @@ function actualizarGrafico() {
   chartInstance.update();
 }
 
-// Búsqueda por cilindro
-const searchInput = document.getElementById('searchInput');
-if (searchInput) {
-  searchInput.addEventListener('input', (e) => {
-    const term = e.target.value.toLowerCase();
-    const filtrados = registros
-      .filter(r => r.cilindro.toLowerCase().includes(term))
-      .sort((a, b) => a.id - b.id);
-    renderTabla(filtrados);
+// Búsqueda
+document.getElementById('searchInput').addEventListener('input', (e) => {
+  const term = e.target.value.toLowerCase();
+  const filtrados = registros.filter(r => r.cilindro.toLowerCase().includes(term));
+  renderTabla(filtrados);
+});
+
+// Exportación CSV
+document.getElementById('btnExport').addEventListener('click', () => {
+  if (registros.length === 0) return alert('No hay datos para exportar.');
+
+  let csvContent = "\uFEFF"; 
+  csvContent += "# Cilindro;Fecha Produccion;Responsable;Conductividad;Dureza Total;pH;Cloro Residual;Olor;Color;Conforme\n";
+
+  registros.forEach(r => {
+    csvContent += `"${r.cilindro}";"${r.fecha}";"${r.responsable || '-'}";${r.conductividad};${r.dureza};${r.ph};${r.cloro};"${r.olor}";"${r.color}";"${r.conforme ? 'SI' : 'NO'}"\n`;
   });
+
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  
+  link.setAttribute("href", url);
+  link.setAttribute("download", `CPFO-16_AguaTratada_${Date.now()}.csv`);
+  document.body.appendChild(link);
+  
+  link.click();
+  document.body.removeChild(link);
+});
+
+// ==========================================
+// 7. LÓGICA DE BITÁCORA Y OBSERVACIONES
+// ==========================================
+function abrirBitacora() {
+  document.getElementById('modal-bitacora').style.display = 'flex';
+  renderizarBitacora();
 }
 
-// EXPORTACIÓN CSV
-const btnExport = document.getElementById('btnExport');
-if (btnExport) {
-  btnExport.addEventListener('click', () => {
-    if (registros.length === 0) return alert('No hay datos para exportar.');
+function cerrarBitacora() {
+  document.getElementById('modal-bitacora').style.display = 'none';
+}
 
-    let csvContent = "\uFEFF"; 
-    csvContent += "# Cilindro;Fecha Produccion;Responsable;Conductividad;Dureza Total;pH;Cloro Residual;Olor;Color;Conforme\n";
+async function agregarObservacionBitacora(e) {
+  e.preventDefault();
+  const textarea = document.getElementById('bitacora-texto');
+  const texto = textarea.value.trim();
 
-    const datosOrdenados = [...registros].sort((a, b) => a.id - b.id);
+  if (!texto) return;
 
-    datosOrdenados.forEach(r => {
-      const condFormatted = r.conductividad.toString().replace('.', ',');
-      const durezaFormatted = r.dureza.toString().replace('.', ',');
-      const phFormatted = r.ph.toString().replace('.', ',');
-      const cloroFormatted = r.cloro.toString().replace('.', ',');
+  const { error } = await supabaseClient.from('bitacora').insert([
+    {
+      usuario: currentUser ? currentUser.nombre : 'Usuario Anónimo',
+      rol: currentUser ? currentUser.role : 'invitado',
+      texto: texto
+    }
+  ]);
 
-      csvContent += `"${r.cilindro}";"${r.fecha}";"${r.responsable || '-'}";${condFormatted};${durezaFormatted};${phFormatted};${cloroFormatted};"${r.olor}";"${r.color}";"${r.conforme ? 'SI' : 'NO'}"\n`;
-    });
+  if (!error) {
+    textarea.value = '';
+    await cargarBitacoraDesdeSupabase();
+  }
+}
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    
-    link.setAttribute("href", url);
-    link.setAttribute("download", `CPFO-16_AguaTratada_${Date.now()}.csv`);
-    document.body.appendChild(link);
-    
-    link.click();
-    document.body.removeChild(link);
-    setTimeout(() => URL.revokeObjectURL(url), 100);
-  });
+async function registrarEnBitacoraAutomático(mensaje) {
+  await supabaseClient.from('bitacora').insert([
+    {
+      usuario: currentUser ? currentUser.nombre : 'Sistema',
+      rol: currentUser ? currentUser.role : 'sistema',
+      texto: `📌 [SISTEMA]: ${mensaje}`
+    }
+  ]);
+}
+
+function renderizarBitacora() {
+  const contenedor = document.getElementById('lista-bitacora');
+  
+  if (bitacoraRegistros.length === 0) {
+    contenedor.innerHTML = '<p style="text-align:center; color:#777;">No hay registros ni observaciones aún.</p>';
+    return;
+  }
+
+  contenedor.innerHTML = bitacoraRegistros.map(reg => `
+    <div class="bitacora-item" style="border-bottom: 1px solid #ddd; padding: 8px 0;">
+      <div class="bitacora-header" style="display: flex; justify-content: space-between; font-size: 0.85rem; color: #555;">
+        <span>👤 <strong>${reg.usuario}</strong> (${reg.rol.toUpperCase()})</span>
+        <span>🕒 ${reg.fechaHora}</span>
+      </div>
+      <div class="bitacora-texto" style="margin-top: 4px;">${reg.texto}</div>
+    </div>
+  `).join('');
 }
