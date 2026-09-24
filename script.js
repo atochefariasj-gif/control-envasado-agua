@@ -431,12 +431,23 @@ document.getElementById('form-agua').addEventListener('submit', async (e) => {
 // ==========================================
 // 5. SOLICITUD Y CONFIRMACIÓN DE LOTES
 // ==========================================
+// SOLICITUD DE NUEVO LOTE (Con correlativo A026.261-001, A026.261-002...)
 async function crearSolicitudLote(e) {
   e.preventDefault();
   const detalle = document.getElementById('sol-cilindros').value;
   const fechaEntrega = document.getElementById('sol-fecha').value;
-  const idSol = 'LOTE-' + Date.now().toString().slice(-5);
 
+  // 1. Filtrar solo las solicitudes de lotes (excluyendo los registros individuales de CPFO16)
+  const lotesExistentes = solicitudes.filter(s => s.producto !== 'Registro_CPFO16');
+
+  // 2. Calcular el siguiente número correlativo creciente
+  const siguienteCorrelativo = lotesExistentes.length + 1;
+  const numeroFormateado = siguienteCorrelativo.toString().padStart(3, '0'); // Convierte a 001, 002, 003...
+
+  // 3. Generar el ID con la estructura fija de la etiqueta
+  const idSol = `A026.261-${numeroFormateado}`;
+
+  // 4. Insertar en Supabase
   const { error } = await supabaseClient.from('solicitudes').insert([
     {
       id: idSol,
@@ -450,8 +461,10 @@ async function crearSolicitudLote(e) {
   if (!error) {
     document.getElementById('sol-cilindros').value = '';
     document.getElementById('sol-fecha').value = '';
-    await registrarEnBitacoraAutomático(`Nueva solicitud de lote creada: ${detalle}`);
+    await registrarEnBitacoraAutomático(`Nueva solicitud de lote creada: ${idSol} - ${detalle}`);
     await cargarSolicitudesDesdeSupabase();
+  } else {
+    alert("Error al crear la solicitud: " + error.message);
   }
 }
 
