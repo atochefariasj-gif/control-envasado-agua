@@ -66,7 +66,11 @@ function cargarOpcionesCilindros() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  document.getElementById('app-content').style.display = 'block';
+  // Asegurar vista de login inicial
+  const loginModal = document.getElementById('login-modal');
+  const appContent = document.getElementById('app-content');
+  if (loginModal) loginModal.style.display = 'flex';
+  if (appContent) appContent.style.display = 'block';
 
   const elemFecha = document.getElementById('fechaProd');
   if (elemFecha) elemFecha.valueAsDate = new Date();
@@ -497,7 +501,7 @@ function renderSolicitudes() {
   container.innerHTML = '';
 
   if (solicitudes.length === 0) {
-    container.innerHTML = '<p style="font-size: 0.85rem; color: var(--text-muted);">No hay solicitudes de nuevos lotes registradas.</p>';
+    container.innerHTML = '<p style="font-size: 0.85rem; color: #666;">No hay solicitudes de nuevos lotes registradas.</p>';
     return;
   }
 
@@ -519,7 +523,7 @@ function renderSolicitudes() {
 
     if (estaCompletado) {
       htmlContent += `
-        <button class="btn btn-secondary" onclick="verTablaLoteCompletado('${sol.id}')" style="font-size: 0.8rem; padding: 6px 12px; height: fit-content;">
+        <button class="btn btn-secondary" onclick="verTablaLoteCompletado('${sol.id}')" style="font-size: 0.8rem; padding: 6px 12px; height: fit-content; cursor: pointer;">
           📊 Ver Tabla
         </button>
       `;
@@ -571,7 +575,6 @@ async function eliminarRegistro(id) {
 // 6. RENDERIZADO TABLA, KPIS Y GRÁFICO
 // ==========================================
 function actualizarUI() {
-  // Filtrar y mostrar únicamente los cilindros del Lote Activo en la pantalla principal
   const registrosLoteActivo = registros.filter(r => r.lote === (loteActivoId || 'SIN_LOTE'));
 
   renderTabla(registrosLoteActivo);
@@ -606,7 +609,7 @@ function renderTabla(datosLoteActivo) {
 
     let htmlRow = `
       <td><strong>${item.cilindro}</strong></td>
-      <td>${item.fecha}</td>
+      <td>${item.fecha || '-'}</td>
       <td>${item.responsable || '-'}</td>
       <td>${item.conductividad}</td>
       <td>${item.dureza}</td>
@@ -711,13 +714,24 @@ function actualizarGrafico(datosLoteActivo = []) {
   chartInstance.update();
 }
 
-// Modal Ver Tabla de Lote Completado
+// ==========================================
+// MODAL DE LOTE COMPLETADO (OPTIMIZADO)
+// ==========================================
 function verTablaLoteCompletado(idLote) {
-  const cilindrosLote = registros.filter(r => r.lote === idLote);
+  const modal = document.getElementById('modal-ver-lote');
   const bodyModal = document.getElementById('tabla-body-modal-lote');
+  const titulo = document.getElementById('modal-lote-titulo');
+  const subtitulo = document.getElementById('modal-lote-subtitulo');
+
+  if (!modal || !bodyModal) {
+    console.error("No se encontró la estructura del modal en el HTML.");
+    return;
+  }
+
+  const cilindrosLote = registros.filter(r => r.lote === idLote);
   
-  document.getElementById('modal-lote-titulo').textContent = `Cilindros del Lote: ${idLote}`;
-  document.getElementById('modal-lote-subtitulo').textContent = `Total cilindros registrados: ${cilindrosLote.length}`;
+  if (titulo) titulo.textContent = `Cilindros del Lote: ${idLote}`;
+  if (subtitulo) subtitulo.textContent = `Total cilindros registrados: ${cilindrosLote.length}`;
   
   bodyModal.innerHTML = '';
 
@@ -730,7 +744,7 @@ function verTablaLoteCompletado(idLote) {
       
       tr.innerHTML = `
         <td><strong>${item.cilindro}</strong></td>
-        <td>${item.fecha}</td>
+        <td>${item.fecha || '-'}</td>
         <td>${item.responsable || '-'}</td>
         <td>${item.conductividad}</td>
         <td>${item.dureza}</td>
@@ -744,11 +758,12 @@ function verTablaLoteCompletado(idLote) {
     });
   }
 
-  document.getElementById('modal-ver-lote').style.display = 'flex';
+  modal.style.display = 'flex';
 }
 
 function cerrarModalLote() {
-  document.getElementById('modal-ver-lote').style.display = 'none';
+  const modal = document.getElementById('modal-ver-lote');
+  if (modal) modal.style.display = 'none';
 }
 
 // Búsqueda
@@ -798,12 +813,16 @@ if (btnExport) {
 // 7. LÓGICA DE BITÁCORA Y OBSERVACIONES
 // ==========================================
 function abrirBitacora() {
-  document.getElementById('modal-bitacora').style.display = 'flex';
-  renderizarBitacora();
+  const modalBitacora = document.getElementById('modal-bitacora');
+  if (modalBitacora) {
+    modalBitacora.style.display = 'flex';
+    renderizarBitacora();
+  }
 }
 
 function cerrarBitacora() {
-  document.getElementById('modal-bitacora').style.display = 'none';
+  const modalBitacora = document.getElementById('modal-bitacora');
+  if (modalBitacora) modalBitacora.style.display = 'none';
 }
 
 async function agregarObservacionBitacora(e) {
