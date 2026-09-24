@@ -52,6 +52,7 @@ const CREDENTIALLS = {
 // Cargar opciones OW001 - OW027
 function cargarOpcionesCilindros() {
   const selectCilindro = document.getElementById('numCilindro');
+  if (!selectCilindro) return;
   selectCilindro.innerHTML = '<option value="" disabled selected>-- Seleccione Cilindro --</option>';
   for (let i = 1; i <= 27; i++) {
     const num = i.toString().padStart(3, '0');
@@ -64,11 +65,19 @@ function cargarOpcionesCilindros() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  document.getElementById('fechaProd').valueAsDate = new Date();
+  // Mantener la app visible en segundo plano para que se aprecie detrás del modal transparente
+  document.getElementById('app-content').style.display = 'block';
+
+  const elemFecha = document.getElementById('fechaProd');
+  if (elemFecha) elemFecha.valueAsDate = new Date();
+  
   cargarOpcionesCilindros();
 
   // Registrar Service Worker para PWA y Notificaciones Push
   registrarServiceWorkerYNotificaciones();
+
+  // Inicializar el gráfico básico en fondo
+  inicializarGrafico();
 
   // Cargar datos iniciales desde Supabase
   await cargarRegistrosDesdeSupabase();
@@ -175,7 +184,6 @@ async function cargarRegistrosDesdeSupabase() {
       let olor = 'CC';
       let color = 'CC';
 
-      // Parsear datos embebidos en el campo 'producto' (compatibilidad sin columna 'detalle')
       if (item.producto && item.producto.includes('|')) {
         const partes = item.producto.split('|');
         partes.forEach(p => {
@@ -340,17 +348,18 @@ function iniciarSesionApp() {
   document.getElementById('user-display-tag').textContent = `${currentUser.nombre} (${currentUser.role.toUpperCase()})`;
 
   if (currentUser.role === 'operador') {
-    document.getElementById('responsable').value = currentUser.nombre;
+    const elemResp = document.getElementById('responsable');
+    if (elemResp) elemResp.value = currentUser.nombre;
   }
 
   aplicarPermisosPorRol();
-  inicializarGrafico();
   actualizarUI();
 }
 
 function cerrarSesion() {
   currentUser = null;
-  document.getElementById('app-content').style.display = 'none';
+  // Mantiene visible el fondo de la app mientras muestra el modal de login
+  document.getElementById('app-content').style.display = 'block'; 
   document.getElementById('login-modal').style.display = 'flex';
   volverARoles();
 }
@@ -362,25 +371,27 @@ function aplicarPermisosPorRol() {
   const btnExport = document.getElementById('btnExport');
   const mainGrid = document.querySelector('.main-grid');
 
-  secSolicitudes.style.display = 'block';
+  if (!currentUser) return;
+
+  if (secSolicitudes) secSolicitudes.style.display = 'block';
 
   if (currentUser.role === 'operador') {
-    secForm.style.display = 'block';
-    formSolicitud.style.display = 'none';
-    btnExport.style.display = 'none';
-    mainGrid.classList.remove('full-width-grid');
+    if (secForm) secForm.style.display = 'block';
+    if (formSolicitud) formSolicitud.style.display = 'none';
+    if (btnExport) btnExport.style.display = 'none';
+    if (mainGrid) mainGrid.classList.remove('full-width-grid');
   } 
   else if (currentUser.role === 'admin') {
-    secForm.style.display = 'none';
-    formSolicitud.style.display = 'none';
-    btnExport.style.display = 'inline-flex';
-    mainGrid.classList.add('full-width-grid');
+    if (secForm) secForm.style.display = 'none';
+    if (formSolicitud) formSolicitud.style.display = 'none';
+    if (btnExport) btnExport.style.display = 'inline-flex';
+    if (mainGrid) mainGrid.classList.add('full-width-grid');
   } 
   else if (currentUser.role === 'jefe') {
-    secForm.style.display = 'none';
-    formSolicitud.style.display = 'grid';
-    btnExport.style.display = 'none';
-    mainGrid.classList.add('full-width-grid');
+    if (secForm) secForm.style.display = 'none';
+    if (formSolicitud) formSolicitud.style.display = 'grid';
+    if (btnExport) btnExport.style.display = 'none';
+    if (mainGrid) mainGrid.classList.add('full-width-grid');
   }
 }
 
@@ -388,7 +399,6 @@ function aplicarPermisosPorRol() {
 // 4. EVALUACIÓN Y REGISTRO DE CILINDROS
 // ==========================================
 
-// Evaluación de conformidad estricta
 function evaluarConformidad(cond, dureza, ph, cloro, olor, color) {
   const condOK = typeof cond === 'number' && !isNaN(cond) && cond <= 70.0;
   const durezaOK = typeof dureza === 'number' && !isNaN(dureza) && dureza <= 2.0;
@@ -400,57 +410,56 @@ function evaluarConformidad(cond, dureza, ph, cloro, olor, color) {
   return condOK && durezaOK && phOK && cloroOK && olorOK && colorOK;
 }
 
-document.getElementById('form-agua').addEventListener('submit', async (e) => {
-  e.preventDefault();
+const formAgua = document.getElementById('form-agua');
+if (formAgua) {
+  formAgua.addEventListener('submit', async (e) => {
+    e.preventDefault();
 
-  const cilindro = document.getElementById('numCilindro').value;
-  const existe = registros.some(r => r.cilindro.toUpperCase() === cilindro.toUpperCase());
-  if (existe) {
-    alert(`El cilindro ${cilindro} ya ha sido registrado previamente.`);
-    return;
-  }
-
-  const fecha = document.getElementById('fechaProd').value;
-  const responsable = document.getElementById('responsable').value;
-  
-  // Lectura directa de valores numéricos
-  const conductividad = parseFloat(document.getElementById('conductividad').value);
-  const dureza = parseFloat(document.getElementById('dureza').value);
-  const ph = parseFloat(document.getElementById('ph').value);
-  const cloro = parseFloat(document.getElementById('cloro').value);
-  const olor = document.getElementById('olor').value;
-  const color = document.getElementById('color').value;
-
-  const conforme = evaluarConformidad(conductividad, dureza, ph, cloro, olor, color);
-
-  // Concatenación de parámetros para no requerir columnas adicionales en la BD
-  const datosFormateados = `Registro_CPFO16|D:${dureza}|PH:${ph}|CL:${cloro}|OL:${olor}|CO:${color}`;
-
-  // Guardar en Supabase
-  const { error } = await supabaseClient.from('solicitudes').insert([
-    {
-      id: cilindro,
-      producto: datosFormateados,
-      cantidad: conductividad,
-      estado: conforme ? 'Conforme' : 'No Conforme',
-      creado_por: responsable,
-      fecha_completado: fecha
+    const cilindro = document.getElementById('numCilindro').value;
+    const existe = registros.some(r => r.cilindro.toUpperCase() === cilindro.toUpperCase());
+    if (existe) {
+      alert(`El cilindro ${cilindro} ya ha sido registrado previamente.`);
+      return;
     }
-  ]);
 
-  if (!error) {
-    alert(`Cilindro ${cilindro} registrado con éxito (${conforme ? 'CONFORME' : 'NO CONFORME'}).`);
-    await cargarRegistrosDesdeSupabase();
+    const fecha = document.getElementById('fechaProd').value;
+    const responsable = document.getElementById('responsable').value;
+    
+    const conductividad = parseFloat(document.getElementById('conductividad').value);
+    const dureza = parseFloat(document.getElementById('dureza').value);
+    const ph = parseFloat(document.getElementById('ph').value);
+    const cloro = parseFloat(document.getElementById('cloro').value);
+    const olor = document.getElementById('olor').value;
+    const color = document.getElementById('color').value;
 
-    document.getElementById('numCilindro').selectedIndex = 0;
-    document.getElementById('conductividad').value = '';
-    document.getElementById('dureza').value = '';
-    document.getElementById('ph').value = '';
-    document.getElementById('cloro').value = '';
-  } else {
-    alert("Error al guardar en Supabase: " + error.message);
-  }
-});
+    const conforme = evaluarConformidad(conductividad, dureza, ph, cloro, olor, color);
+    const datosFormateados = `Registro_CPFO16|D:${dureza}|PH:${ph}|CL:${cloro}|OL:${olor}|CO:${color}`;
+
+    const { error } = await supabaseClient.from('solicitudes').insert([
+      {
+        id: cilindro,
+        producto: datosFormateados,
+        cantidad: conductividad,
+        estado: conforme ? 'Conforme' : 'No Conforme',
+        creado_por: responsable,
+        fecha_completado: fecha
+      }
+    ]);
+
+    if (!error) {
+      alert(`Cilindro ${cilindro} registrado con éxito (${conforme ? 'CONFORME' : 'NO CONFORME'}).`);
+      await cargarRegistrosDesdeSupabase();
+
+      document.getElementById('numCilindro').selectedIndex = 0;
+      document.getElementById('conductividad').value = '';
+      document.getElementById('dureza').value = '';
+      document.getElementById('ph').value = '';
+      document.getElementById('cloro').value = '';
+    } else {
+      alert("Error al guardar en Supabase: " + error.message);
+    }
+  });
+}
 
 // ==========================================
 // 5. SOLICITUD Y CONFIRMACIÓN DE LOTES
@@ -470,7 +479,7 @@ async function crearSolicitudLote(e) {
       id: idSol,
       producto: detalle,
       estado: 'Pendiente',
-      creado_por: currentUser.nombre,
+      creado_por: currentUser ? currentUser.nombre : 'Sistema',
       fecha_completado: fechaEntrega
     }
   ]);
@@ -487,6 +496,7 @@ async function crearSolicitudLote(e) {
 
 function renderSolicitudes() {
   const container = document.getElementById('lista-solicitudes');
+  if (!container) return;
   container.innerHTML = '';
 
   if (solicitudes.length === 0) {
@@ -529,19 +539,19 @@ async function confirmarLote(idSolicitud) {
     .from('solicitudes')
     .update({ 
       estado: 'Completado', 
-      completado_por: currentUser.nombre 
+      completado_por: currentUser ? currentUser.nombre : 'Operador' 
     })
     .eq('id', idSolicitud);
 
   if (!error) {
-    await registrarEnBitacoraAutomático(`El lote #${idSolicitud} fue completado y confirmado por ${currentUser.nombre}.`);
+    await registrarEnBitacoraAutomático(`El lote #${idSolicitud} fue completado y confirmado.`);
     await cargarSolicitudesDesdeSupabase();
     alert("¡El lote se ha marcado como completado correctamente!");
   }
 }
 
 async function eliminarRegistro(id) {
-  if (currentUser.role !== 'admin') {
+  if (!currentUser || currentUser.role !== 'admin') {
     alert('Acceso Denegado: Solo el administrador puede eliminar registros.');
     return;
   }
@@ -563,6 +573,7 @@ function actualizarUI() {
 
 function renderTabla(datos) {
   const tablaBody = document.getElementById('tabla-body');
+  if (!tablaBody) return;
   tablaBody.innerHTML = '';
 
   const colAccionHeader = document.querySelectorAll('.col-accion');
@@ -623,17 +634,22 @@ function calcularPromedios(datos) {
   const sumPh = datos.reduce((a, b) => a + b.ph, 0);
   const sumCloro = datos.reduce((a, b) => a + b.cloro, 0);
 
-  document.getElementById('prom-cond').textContent = (sumCond / count).toFixed(2);
-  document.getElementById('prom-dureza').textContent = (sumDureza / count).toFixed(2);
-  document.getElementById('prom-ph').textContent = (sumPh / count).toFixed(2);
-  document.getElementById('prom-cloro').textContent = (sumCloro / count).toFixed(3);
+  const eCond = document.getElementById('prom-cond');
+  const eDur = document.getElementById('prom-dureza');
+  const ePh = document.getElementById('prom-ph');
+  const eClo = document.getElementById('prom-cloro');
+
+  if (eCond) eCond.textContent = (sumCond / count).toFixed(2);
+  if (eDur) eDur.textContent = (sumDureza / count).toFixed(2);
+  if (ePh) ePh.textContent = (sumPh / count).toFixed(2);
+  if (eClo) eClo.textContent = (sumCloro / count).toFixed(3);
 }
 
 function limpiarPromedios() {
-  document.getElementById('prom-cond').textContent = '-';
-  document.getElementById('prom-dureza').textContent = '-';
-  document.getElementById('prom-ph').textContent = '-';
-  document.getElementById('prom-cloro').textContent = '-';
+  ['prom-cond', 'prom-dureza', 'prom-ph', 'prom-cloro'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = '-';
+  });
 }
 
 function actualizarKPIs() {
@@ -643,14 +659,21 @@ function actualizarKPIs() {
     ? (registros.reduce((a, b) => a + b.conductividad, 0) / registros.length).toFixed(1)
     : '0.0';
 
-  document.getElementById('kpi-total').textContent = registros.length;
-  document.getElementById('kpi-conformes').textContent = conformes;
-  document.getElementById('kpi-noconformes').textContent = noConformes;
-  document.getElementById('kpi-cond').textContent = promCond;
+  const eTot = document.getElementById('kpi-total');
+  const eConf = document.getElementById('kpi-conformes');
+  const eNoConf = document.getElementById('kpi-noconformes');
+  const eCond = document.getElementById('kpi-cond');
+
+  if (eTot) eTot.textContent = registros.length;
+  if (eConf) eConf.textContent = conformes;
+  if (eNoConf) eNoConf.textContent = noConformes;
+  if (eCond) eCond.textContent = promCond;
 }
 
 function inicializarGrafico() {
-  const ctx = document.getElementById('qualityChart').getContext('2d');
+  const canvas = document.getElementById('qualityChart');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
   if (chartInstance) chartInstance.destroy();
 
   chartInstance = new Chart(ctx, {
@@ -680,40 +703,46 @@ function actualizarGrafico() {
 }
 
 // Búsqueda
-document.getElementById('searchInput').addEventListener('input', (e) => {
-  const term = e.target.value.toLowerCase();
-  const filtrados = registros.filter(r => r.cilindro.toLowerCase().includes(term));
-  renderTabla(filtrados);
-});
+const searchInput = document.getElementById('searchInput');
+if (searchInput) {
+  searchInput.addEventListener('input', (e) => {
+    const term = e.target.value.toLowerCase();
+    const filtrados = registros.filter(r => r.cilindro.toLowerCase().includes(term));
+    renderTabla(filtrados);
+  });
+}
 
 // Exportación CSV
-document.getElementById('btnExport').addEventListener('click', () => {
-  if (registros.length === 0) return alert('No hay datos para exportar.');
+const btnExport = document.getElementById('btnExport');
+if (btnExport) {
+  btnExport.addEventListener('click', () => {
+    if (registros.length === 0) return alert('No hay datos para exportar.');
 
-  let csvContent = "\uFEFF"; 
-  csvContent += "# Cilindro;Fecha Produccion;Responsable;Conductividad;Dureza Total;pH;Cloro Residual;Olor;Color;Conforme\n";
+    let csvContent = "\uFEFF"; 
+    csvContent += "# Cilindro;Fecha Produccion;Responsable;Conductividad;Dureza Total;pH;Cloro Residual;Olor;Color;Conforme\n";
 
-  registros.forEach(r => {
-    const condFormatted = r.conductividad.toString().replace('.', ',');
-    const durezaFormatted = r.dureza.toString().replace('.', ',');
-    const phFormatted = r.ph.toString().replace('.', ',');
-    const cloroFormatted = r.cloro.toString().replace('.', ',');
+    registros.forEach(r => {
+      const condFormatted = r.conductividad.toString().replace('.', ',');
+      const durezaFormatted = r.dureza.toString().replace('.', ',');
+      const phFormatted = r.ph.toString().replace('.', ',');
+      const cloroFormatted = r.cloro.toString().replace('.', ',');
 
-    csvContent += `"${r.cilindro}";"${r.fecha}";"${r.responsable || '-'}";${condFormatted};${durezaFormatted};${phFormatted};${cloroFormatted};"${r.olor}";"${r.color}";"${r.conforme ? 'SI' : 'NO'}"\n`;
+      csvContent += `"${r.cilindro}";"${r.fecha}";"${r.responsable || '-'}";${condFormatted};${durezaFormatted};${phFormatted};${cloroFormatted};"${r.olor}";"${r.color}";"${r.conforme ? 'SI' : 'NO'}"\n`;
+    });
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    
+    link.setAttribute("href", url);
+    link.setAttribute("download", `CPFO-16_AguaTratada_${Date.now()}.csv`);
+    document.body.appendChild(link);
+    
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 100);
   });
-
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  
-  link.setAttribute("href", url);
-  link.setAttribute("download", `CPFO-16_AguaTratada_${Date.now()}.csv`);
-  document.body.appendChild(link);
-  
-  link.click();
-  document.body.removeChild(link);
-  setTimeout(() => URL.revokeObjectURL(url), 100);
-});
+}
 
 // ==========================================
 // 7. LÓGICA DE BITÁCORA Y OBSERVACIONES
@@ -760,6 +789,7 @@ async function registrarEnBitacoraAutomático(mensaje) {
 
 function renderizarBitacora() {
   const contenedor = document.getElementById('lista-bitacora');
+  if (!contenedor) return;
   
   if (bitacoraRegistros.length === 0) {
     contenedor.innerHTML = '<p style="text-align:center; color:#777;">No hay registros ni observaciones aún.</p>';
