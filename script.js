@@ -390,7 +390,7 @@ function aplicarPermisosPorRol() {
 
 // Evaluación de conformidad estricta
 function evaluarConformidad(cond, dureza, ph, cloro, olor, color) {
-  const condOK = typeof cond === 'number' && !isNaN(cond) && cond <= 10.0;
+  const condOK = typeof cond === 'number' && !isNaN(cond) && cond <= 70.0;
   const durezaOK = typeof dureza === 'number' && !isNaN(dureza) && dureza <= 2.0;
   const phOK = typeof ph === 'number' && !isNaN(ph) && ph >= 6.0 && ph <= 7.0;
   const cloroOK = typeof cloro === 'number' && !isNaN(cloro) && cloro < 0.01;
