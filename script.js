@@ -107,7 +107,6 @@ async function solicitarPermisoNotificaciones(registration) {
       });
       console.log('FCM Token de Notificaciones Push:', token);
 
-      // Guardar el token en Supabase
       if (token) {
         await guardarTokenEnSupabase(token);
       }
@@ -118,7 +117,6 @@ async function solicitarPermisoNotificaciones(registration) {
     console.error('Error obteniendo token FCM:', err);
   }
 
-  // Escuchar notificaciones en primer plano
   messaging.onMessage((payload) => {
     console.log('Notificación recibida en primer plano:', payload);
     const title = payload.notification?.title || 'Nuevo aviso de producción';
@@ -127,16 +125,13 @@ async function solicitarPermisoNotificaciones(registration) {
   });
 }
 
-// Guardar Token FCM en la tabla fcm_tokens de Supabase
 async function guardarTokenEnSupabase(tokenFCM) {
   try {
-    // 1. Verificar si el token ya existe en la tabla dispositivos_tokens
     const { data: existente } = await supabaseClient
       .from('dispositivos_tokens')
       .select('fcm_token')
       .eq('fcm_token', tokenFCM);
 
-    // 2. Si no existe, lo insertamos
     if (!existente || existente.length === 0) {
       const { error } = await supabaseClient
         .from('dispositivos_tokens')
@@ -159,6 +154,7 @@ async function guardarTokenEnSupabase(tokenFCM) {
     console.error('Error guardando token:', err);
   }
 }
+
 // ==========================================
 // 2. CONEXIÓN Y ACCIONES SUPABASE (CRUD)
 // ==========================================
@@ -172,19 +168,36 @@ async function cargarRegistrosDesdeSupabase() {
     .order('created_at', { ascending: true });
 
   if (!error && data) {
-    registros = data.map(item => ({
-      id: item.id,
-      cilindro: item.id,
-      fecha: item.fecha_completado || item.created_at.split('T')[0],
-      responsable: item.creado_por,
-      conductividad: parseFloat(item.cantidad || 0),
-      dureza: 0.5,
-      ph: 6.8,
-      cloro: 0.005,
-      olor: 'CC',
-      color: 'CC',
-      conforme: item.estado === 'Conforme'
-    }));
+    registros = data.map(item => {
+      // Intentar leer datos adicionales del objeto guardado en la columna 'detalle' (JSON) o valores individuales
+      let detalleExtra = {};
+      try {
+        detalleExtra = item.detalle ? JSON.parse(item.detalle) : {};
+      } catch (e) {
+        detalleExtra = {};
+      }
+
+      const conductividad = parseFloat(item.cantidad ?? 0);
+      const dureza = parseFloat(detalleExtra.dureza ?? item.dureza ?? 0);
+      const ph = parseFloat(detalleExtra.ph ?? item.ph ?? 0);
+      const cloro = parseFloat(detalleExtra.cloro ?? item.cloro ?? 0);
+      const olor = detalleExtra.olor || item.olor || 'CC';
+      const color = detalleExtra.color || item.color || 'CC';
+
+      return {
+        id: item.id,
+        cilindro: item.id,
+        fecha: item.fecha_completado || (item.created_at ? item.created_at.split('T')[0] : ''),
+        responsable: item.creado_por,
+        conductividad: conductividad,
+        dureza: dureza,
+        ph: ph,
+        cloro: cloro,
+        olor: olor,
+        color: color,
+        conforme: evaluarConformidad(conductividad, dureza, ph, cloro, olor, color)
+      };
+    });
     actualizarUI();
   }
 }
@@ -222,7 +235,6 @@ async function cargarBitacoraDesdeSupabase() {
   }
 }
 
-// Realtime Subscriptions
 function suscribirSupabaseRealtime() {
   supabaseClient
     .channel('public:solicitudes')
@@ -370,11 +382,13 @@ function aplicarPermisosPorRol() {
 // ==========================================
 // 4. EVALUACIÓN Y REGISTRO DE CILINDROS
 // ==========================================
+
+// Evaluación de conformidad estricta
 function evaluarConformidad(cond, dureza, ph, cloro, olor, color) {
-  const condOK = cond <= 10.0;
-  const durezaOK = dureza <= 2.0;
-  const phOK = ph >= 6.0 && ph <= 7.0;
-  const cloroOK = cloro < 0.01;
+  const condOK = typeof cond === 'number' && !isNaN(cond) && cond <= 10.0;
+  const durezaOK = typeof dureza === 'number' && !isNaN(dureza) && dureza <= 2.0;
+  const phOK = typeof ph === 'number' && !isNaN(ph) && ph >= 6.0 && ph <= 7.0;
+  const cloroOK = typeof cloro === 'number' && !isNaN(cloro) && cloro < 0.01;
   const olorOK = olor === 'CC';
   const colorOK = color === 'CC';
 
@@ -393,6 +407,8 @@ document.getElementById('form-agua').addEventListener('submit', async (e) => {
 
   const fecha = document.getElementById('fechaProd').value;
   const responsable = document.getElementById('responsable').value;
+  
+  // Lectura directa de valores numéricos
   const conductividad = parseFloat(document.getElementById('conductividad').value);
   const dureza = parseFloat(document.getElementById('dureza').value);
   const ph = parseFloat(document.getElementById('ph').value);
@@ -402,12 +418,22 @@ document.getElementById('form-agua').addEventListener('submit', async (e) => {
 
   const conforme = evaluarConformidad(conductividad, dureza, ph, cloro, olor, color);
 
+  // Guardar en objeto detalle para asegurar persitencia completa de parámetros
+  const detalleValores = JSON.stringify({
+    dureza: dureza,
+    ph: ph,
+    cloro: cloro,
+    olor: olor,
+    color: color
+  });
+
   // Guardar en Supabase
   const { error } = await supabaseClient.from('solicitudes').insert([
     {
       id: cilindro,
       producto: 'Registro_CPFO16',
       cantidad: conductividad,
+      detalle: detalleValores,
       estado: conforme ? 'Conforme' : 'No Conforme',
       creado_por: responsable,
       fecha_completado: fecha
@@ -415,7 +441,7 @@ document.getElementById('form-agua').addEventListener('submit', async (e) => {
   ]);
 
   if (!error) {
-    alert(`Cilindro ${cilindro} registrado con éxito.`);
+    alert(`Cilindro ${cilindro} registrado con éxito (${conforme ? 'CONFORME' : 'NO CONFORME'}).`);
     await cargarRegistrosDesdeSupabase();
 
     document.getElementById('numCilindro').selectedIndex = 0;
@@ -431,23 +457,16 @@ document.getElementById('form-agua').addEventListener('submit', async (e) => {
 // ==========================================
 // 5. SOLICITUD Y CONFIRMACIÓN DE LOTES
 // ==========================================
-// SOLICITUD DE NUEVO LOTE (Con correlativo A026.261-001, A026.261-002...)
 async function crearSolicitudLote(e) {
   e.preventDefault();
   const detalle = document.getElementById('sol-cilindros').value;
   const fechaEntrega = document.getElementById('sol-fecha').value;
 
-  // 1. Filtrar solo las solicitudes de lotes (excluyendo los registros individuales de CPFO16)
   const lotesExistentes = solicitudes.filter(s => s.producto !== 'Registro_CPFO16');
-
-  // 2. Calcular el siguiente número correlativo creciente
   const siguienteCorrelativo = lotesExistentes.length + 1;
-  const numeroFormateado = siguienteCorrelativo.toString().padStart(3, '0'); // Convierte a 001, 002, 003...
-
-  // 3. Generar el ID con la estructura fija de la etiqueta
+  const numeroFormateado = siguienteCorrelativo.toString().padStart(3, '0');
   const idSol = `A026.261-${numeroFormateado}`;
 
-  // 4. Insertar en Supabase
   const { error } = await supabaseClient.from('solicitudes').insert([
     {
       id: idSol,
@@ -599,6 +618,8 @@ function renderTabla(datos) {
 
 function calcularPromedios(datos) {
   const count = datos.length;
+  if (count === 0) return limpiarPromedios();
+
   const sumCond = datos.reduce((a, b) => a + b.conductividad, 0);
   const sumDureza = datos.reduce((a, b) => a + b.dureza, 0);
   const sumPh = datos.reduce((a, b) => a + b.ph, 0);
@@ -667,7 +688,7 @@ document.getElementById('searchInput').addEventListener('input', (e) => {
   renderTabla(filtrados);
 });
 
-// Exportación CSV
+// Exportación CSV (Punto y coma ';' para compatibilidad en Excel)
 document.getElementById('btnExport').addEventListener('click', () => {
   if (registros.length === 0) return alert('No hay datos para exportar.');
 
@@ -675,7 +696,12 @@ document.getElementById('btnExport').addEventListener('click', () => {
   csvContent += "# Cilindro;Fecha Produccion;Responsable;Conductividad;Dureza Total;pH;Cloro Residual;Olor;Color;Conforme\n";
 
   registros.forEach(r => {
-    csvContent += `"${r.cilindro}";"${r.fecha}";"${r.responsable || '-'}";${r.conductividad};${r.dureza};${r.ph};${r.cloro};"${r.olor}";"${r.color}";"${r.conforme ? 'SI' : 'NO'}"\n`;
+    const condFormatted = r.conductividad.toString().replace('.', ',');
+    const durezaFormatted = r.dureza.toString().replace('.', ',');
+    const phFormatted = r.ph.toString().replace('.', ',');
+    const cloroFormatted = r.cloro.toString().replace('.', ',');
+
+    csvContent += `"${r.cilindro}";"${r.fecha}";"${r.responsable || '-'}";${condFormatted};${durezaFormatted};${phFormatted};${cloroFormatted};"${r.olor}";"${r.color}";"${r.conforme ? 'SI' : 'NO'}"\n`;
   });
 
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -688,6 +714,7 @@ document.getElementById('btnExport').addEventListener('click', () => {
   
   link.click();
   document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(url), 100);
 });
 
 // ==========================================
