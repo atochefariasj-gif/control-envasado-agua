@@ -164,25 +164,30 @@ async function cargarRegistrosDesdeSupabase() {
   const { data, error } = await supabaseClient
     .from('solicitudes')
     .select('*')
-    .eq('producto', 'Registro_CPFO16')
+    .like('producto', 'Registro_CPFO16%')
     .order('created_at', { ascending: true });
 
   if (!error && data) {
     registros = data.map(item => {
-      // Intentar leer datos adicionales del objeto guardado en la columna 'detalle' (JSON) o valores individuales
-      let detalleExtra = {};
-      try {
-        detalleExtra = item.detalle ? JSON.parse(item.detalle) : {};
-      } catch (e) {
-        detalleExtra = {};
+      let dureza = 0;
+      let ph = 0;
+      let cloro = 0;
+      let olor = 'CC';
+      let color = 'CC';
+
+      // Parsear datos embebidos en el campo 'producto' (compatibilidad sin columna 'detalle')
+      if (item.producto && item.producto.includes('|')) {
+        const partes = item.producto.split('|');
+        partes.forEach(p => {
+          if (p.startsWith('D:')) dureza = parseFloat(p.replace('D:', ''));
+          if (p.startsWith('PH:')) ph = parseFloat(p.replace('PH:', ''));
+          if (p.startsWith('CL:')) cloro = parseFloat(p.replace('CL:', ''));
+          if (p.startsWith('OL:')) olor = p.replace('OL:', '');
+          if (p.startsWith('CO:')) color = p.replace('CO:', '');
+        });
       }
 
       const conductividad = parseFloat(item.cantidad ?? 0);
-      const dureza = parseFloat(detalleExtra.dureza ?? item.dureza ?? 0);
-      const ph = parseFloat(detalleExtra.ph ?? item.ph ?? 0);
-      const cloro = parseFloat(detalleExtra.cloro ?? item.cloro ?? 0);
-      const olor = detalleExtra.olor || item.olor || 'CC';
-      const color = detalleExtra.color || item.color || 'CC';
 
       return {
         id: item.id,
@@ -207,7 +212,7 @@ async function cargarSolicitudesDesdeSupabase() {
   const { data, error } = await supabaseClient
     .from('solicitudes')
     .select('*')
-    .neq('producto', 'Registro_CPFO16')
+    .not('producto', 'like', 'Registro_CPFO16%')
     .order('created_at', { ascending: false });
 
   if (!error && data) {
@@ -418,22 +423,15 @@ document.getElementById('form-agua').addEventListener('submit', async (e) => {
 
   const conforme = evaluarConformidad(conductividad, dureza, ph, cloro, olor, color);
 
-  // Guardar en objeto detalle para asegurar persitencia completa de parámetros
-  const detalleValores = JSON.stringify({
-    dureza: dureza,
-    ph: ph,
-    cloro: cloro,
-    olor: olor,
-    color: color
-  });
+  // Concatenación de parámetros para no requerir columnas adicionales en la BD
+  const datosFormateados = `Registro_CPFO16|D:${dureza}|PH:${ph}|CL:${cloro}|OL:${olor}|CO:${color}`;
 
   // Guardar en Supabase
   const { error } = await supabaseClient.from('solicitudes').insert([
     {
       id: cilindro,
-      producto: 'Registro_CPFO16',
+      producto: datosFormateados,
       cantidad: conductividad,
-      detalle: detalleValores,
       estado: conforme ? 'Conforme' : 'No Conforme',
       creado_por: responsable,
       fecha_completado: fecha
@@ -462,7 +460,7 @@ async function crearSolicitudLote(e) {
   const detalle = document.getElementById('sol-cilindros').value;
   const fechaEntrega = document.getElementById('sol-fecha').value;
 
-  const lotesExistentes = solicitudes.filter(s => s.producto !== 'Registro_CPFO16');
+  const lotesExistentes = solicitudes.filter(s => !s.producto.startsWith('Registro_CPFO16'));
   const siguienteCorrelativo = lotesExistentes.length + 1;
   const numeroFormateado = siguienteCorrelativo.toString().padStart(3, '0');
   const idSol = `A026.261-${numeroFormateado}`;
@@ -688,7 +686,7 @@ document.getElementById('searchInput').addEventListener('input', (e) => {
   renderTabla(filtrados);
 });
 
-// Exportación CSV (Punto y coma ';' para compatibilidad en Excel)
+// Exportación CSV
 document.getElementById('btnExport').addEventListener('click', () => {
   if (registros.length === 0) return alert('No hay datos para exportar.');
 
