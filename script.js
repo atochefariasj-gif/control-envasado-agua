@@ -37,6 +37,7 @@ let currentUser = null; // { role: 'operador'|'admin'|'jefe', nombre: '...' }
 let selectedRoleTemp = '';
 let chartInstance = null;
 let loteActivoId = null; // Rastrilla el Lote en curso
+let loteAConfirmar = null; // Auxiliar para modal de confirmación
 
 // Credenciales
 const CREDENTIALLS = {
@@ -517,6 +518,7 @@ function renderSolicitudes() {
         <h4><i class="fa-solid fa-box"></i> ${sol.producto}</h4>
         <p>ID Lote: <strong>${sol.id}</strong> | Requerido para: <strong>${sol.fecha_completado || '-'}</strong></p>
         <p>Estado: ${estaCompletado ? '<span style="color: green; font-weight: bold;">✓ Completado y Confirmado</span>' : '<span style="color: orange; font-weight: bold;">Pendiente (En curso)</span>'}</p>
+        ${sol.observacion ? `<p style="font-size: 0.8rem; color: #555;"><em>Obs: ${sol.observacion}</em></p>` : ''}
       </div>
       <div class="solicitud-acciones" style="display: flex; gap: 8px; align-items: center;">
     `;
@@ -529,7 +531,7 @@ function renderSolicitudes() {
       `;
     } else if (esOperador) {
       htmlContent += `
-        <button class="btn btn-success" onclick="confirmarLote('${sol.id}')">
+        <button class="btn btn-success" onclick="abrirModalConfirmarLote('${sol.id}')">
           ✅ Confirmar Lote Completado
         </button>
       `;
@@ -541,22 +543,39 @@ function renderSolicitudes() {
   });
 }
 
-async function confirmarLote(idSolicitud) {
-  if (!confirm("¿Está seguro de marcar este lote como completado?")) return;
+function abrirModalConfirmarLote(idSolicitud) {
+  loteAConfirmar = idSolicitud;
+  document.getElementById('obs-lote-input').value = '';
+  document.getElementById('modal-confirmar-lote').style.display = 'flex';
+}
+
+function cerrarModalConfirmarLote() {
+  loteAConfirmar = null;
+  document.getElementById('modal-confirmar-lote').style.display = 'none';
+}
+
+async function guardarConfirmacionLote() {
+  if (!loteAConfirmar) return;
+
+  const observacion = document.getElementById('obs-lote-input').value.trim();
 
   const { error } = await supabaseClient
     .from('solicitudes')
     .update({ 
       estado: 'Completado', 
-      completado_por: currentUser ? currentUser.nombre : 'Operador' 
+      completado_por: currentUser ? currentUser.nombre : 'Operador',
+      observacion: observacion || null
     })
-    .eq('id', idSolicitud);
+    .eq('id', loteAConfirmar);
 
   if (!error) {
-    await registrarEnBitacoraAutomático(`El lote #${idSolicitud} fue completado y confirmado por ${currentUser ? currentUser.nombre : 'Operador'}.`);
+    await registrarEnBitacoraAutomático(`El lote #${loteAConfirmar} fue completado por ${currentUser ? currentUser.nombre : 'Operador'}.${observacion ? ' Obs: ' + observacion : ''}`);
+    cerrarModalConfirmarLote();
     await cargarSolicitudesDesdeSupabase();
     await cargarRegistrosDesdeSupabase();
-    alert("¡El lote se ha marcado como completado correctamente! La tabla se ha reiniciado para permitir el registro del siguiente lote.");
+    alert("¡El lote se ha marcado como completado correctamente!");
+  } else {
+    alert("Error al confirmar el lote: " + error.message);
   }
 }
 
@@ -691,15 +710,16 @@ function inicializarGrafico() {
   chartInstance = new Chart(ctx, {
     type: 'doughnut',
     data: {
-      labels: ['Conforme', 'No Conforme'],
+      labels: ['Conforme', 'No Conforme', 'Restantes'],
       datasets: [{
-        data: [0, 0],
-        backgroundColor: ['#15803d', '#dc2626']
+        data: [0, 0, 100],
+        backgroundColor: ['#15803d', '#dc2626', '#e5e7eb']
       }]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      cutout: '75%',
       plugins: { legend: { position: 'bottom' } }
     }
   });
@@ -707,11 +727,32 @@ function inicializarGrafico() {
 
 function actualizarGrafico(datosLoteActivo = []) {
   if (!chartInstance) return;
+
   const conformes = datosLoteActivo.filter(r => r.conforme).length;
   const noConformes = datosLoteActivo.filter(r => !r.conforme).length;
+  const totalRegistrados = datosLoteActivo.length;
 
-  chartInstance.data.datasets[0].data = [conformes, noConformes];
+  // Obtener objetivo desde el lote activo
+  const lotePendiente = solicitudes.find(s => s.id === loteActivoId);
+  let totalEsperado = 27; // Valor por defecto
+
+  if (lotePendiente && lotePendiente.producto) {
+    const match = lotePendiente.producto.match(/\((\d+)\s*cilindros?\)/i);
+    if (match && match[1]) {
+      totalEsperado = parseInt(match[1], 10);
+    }
+  }
+
+  const restantes = Math.max(0, totalEsperado - totalRegistrados);
+  const porcentajeAvance = totalEsperado > 0 ? Math.round((totalRegistrados / totalEsperado) * 100) : 0;
+
+  chartInstance.data.datasets[0].data = [conformes, noConformes, restantes];
   chartInstance.update();
+
+  const centerText = document.getElementById('chart-center-text');
+  if (centerText) {
+    centerText.textContent = `${porcentajeAvance}%`;
+  }
 }
 
 // ==========================================
