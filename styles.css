@@ -29,7 +29,7 @@ body {
   padding-bottom: 40px;
 }
 
-/* Modal de Login (Estilo Semitransparente con Desenfoque) */
+/* Modal de Login (Estilo Semitransparente con Desenfoque MANTENIDO INTRACTO) */
 .modal-overlay {
   position: fixed;
   top: 0; 
@@ -320,7 +320,7 @@ body {
   color: var(--text-muted);
 }
 
-/* Tabla */
+/* Tabla General de la App */
 .full-width { grid-column: 1 / -1; }
 
 .table-header {
@@ -368,6 +368,16 @@ th { background-color: #f1f5f9; font-weight: bold; }
   font-size: 0.85rem;
 }
 
+/* Modal General y Content Card */
+.modal-content {
+  background: #ffffff !important; /* Fondo blanco totalmente opaco para legibilidad */
+  color: #0f172a !important;
+  padding: 24px;
+  border-radius: 12px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 10px 10px -5px rgba(0, 0, 0, 0.2);
+  border: 1px solid #cbd5e1;
+}
+
 /* Modal Bitácora */
 .bitacora-content {
   max-width: 650px;
@@ -413,4 +423,83 @@ th { background-color: #f1f5f9; font-weight: bold; }
   font-size: 0.95rem;
   color: #333;
   white-space: pre-wrap;
+}
+
+.btn-close {
+  background: transparent;
+  border: none;
+  font-size: 1.2rem;
+  font-weight: bold;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.btn-close:hover {
+  color: #0f172a;
+}
+
+/* ======================================================
+   NUEVOS ESTILOS ESPECÍFICOS: MODAL VER TABLA DE LOTE
+   ====================================================== */
+#modal-ver-lote .modal-content {
+  max-width: 900px !important;
+  width: 92% !important;
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}
+
+#modal-ver-lote .modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  text-align: left;
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 12px;
+  margin-bottom: 15px;
+}
+
+#modal-ver-lote .modal-header h2 {
+  font-size: 1.25rem;
+  color: #0f172a !important;
+}
+
+#modal-ver-lote .modal-header small {
+  color: #64748b !important;
+}
+
+#modal-ver-lote .table-responsive {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background-color: #ffffff !important;
+}
+
+#modal-ver-lote table {
+  width: 100%;
+  border-collapse: collapse;
+  background-color: #ffffff !important;
+}
+
+#modal-ver-lote th {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+  font-weight: 700;
+  padding: 10px 12px;
+  border: 1px solid #cbd5e1;
+  white-space: nowrap;
+}
+
+#modal-ver-lote td {
+  padding: 9px 12px;
+  border: 1px solid #e2e8f0;
+  color: #334155 !important;
+  white-space: nowrap;
+  font-size: 0.875rem;
+}
+
+#modal-ver-lote tbody tr:nth-child(even) {
+  background-color: #f8fafc !important;
+}
+
+#modal-ver-lote tbody tr:hover {
+  background-color: #f1f5f9 !important;
 }
