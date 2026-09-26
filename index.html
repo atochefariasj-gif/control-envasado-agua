@@ -18,14 +18,13 @@
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-  <!-- 1. Supabase Client Library -->
+  <!-- Supabase Client Library -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
-  <!-- 2. Firebase SDKs (App & Messaging) -->
+  <!-- Firebase SDKs -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-messaging-compat.js"></script>
 
-  <!-- Estilos de la aplicación -->
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -39,7 +38,6 @@
         <p>Seleccione su rol de acceso (CPFO-16)</p>
       </div>
 
-      <!-- Paso 1: Selección de Rol -->
       <div id="role-selection" class="role-grid">
         <button class="role-btn" onclick="seleccionarRol('operador')">
           <i class="fa-solid fa-user-gear"></i>
@@ -55,19 +53,14 @@
         </button>
       </div>
 
-      <!-- Paso 2: Formularios de Login -->
       <form id="form-login" class="login-form" style="display: none;" onsubmit="procesarLogin(event)">
         <h3 id="login-title">Iniciar Sesión</h3>
 
-        <!-- Campo Usuario (Operador / Jefe) -->
         <div class="form-group" id="group-usuario">
           <label for="login-user" id="label-usuario">Usuario</label>
-          <select id="login-user">
-            <!-- Carga dinámica según el rol seleccionado -->
-          </select>
+          <select id="login-user"></select>
         </div>
 
-        <!-- Campo Contraseña -->
         <div class="form-group">
           <label for="login-pass">Contraseña</label>
           <input type="password" id="login-pass" placeholder="Ingrese su contraseña" required>
@@ -94,9 +87,6 @@
           <h1>AGROMAR INDUSTRIAL</h1>
           <small>Control de calidad y liberación de agua tratada</small>
         </div>
-        <button class="btn btn-info" onclick="abrirBitacora()">
-          📋 Bitácora / Observaciones
-        </button>
       </div>
       <div class="user-info">
         <span id="user-display-tag" class="badge-role"></span>
@@ -106,9 +96,14 @@
 
     <div class="container">
 
-      <!-- Sección de Solicitudes de Nuevos Lotes -->
-      <section id="sec-solicitudes" class="card full-width" style="display: none;">
-        <h2><i class="fa-solid fa-clipboard-list"></i> Solicitudes de Nuevos Lotes</h2>
+      <!-- 1. SOLICITUDES DE NUEVOS LOTES (Lista Deslizable y Búsqueda) -->
+      <section id="sec-solicitudes" class="card full-width">
+        <div class="table-header">
+          <h2><i class="fa-solid fa-clipboard-list"></i> Solicitudes de Nuevos Lotes</h2>
+          <div class="table-actions">
+            <input type="text" id="searchSolicitud" placeholder="Buscar por Lote o Fecha..." oninput="filtrarSolicitudes()">
+          </div>
+        </div>
 
         <!-- Formulario exclusivo de Jefe de Producción -->
         <form id="form-solicitud" class="form-row-solicitud" style="display: none;" onsubmit="crearSolicitudLote(event)">
@@ -125,55 +120,73 @@
           </button>
         </form>
 
-        <!-- Lista de Solicitudes Activas -->
-        <div class="solicitudes-list" id="lista-solicitudes">
-          <!-- Carga dinámica desde Supabase -->
+        <!-- Lista de Solicitudes (Scroll Deslizable) -->
+        <div class="solicitudes-scroll-container" style="max-height: 280px; overflow-y: auto; margin-top: 10px;">
+          <div class="solicitudes-list" id="lista-solicitudes"></div>
         </div>
       </section>
 
-      <!-- Tarjetas de Resumen (KPIs del Lote Activo) -->
-      <section id="sec-kpis" class="kpi-grid">
-        <div class="kpi-card">
-          <div class="kpi-icon blue"><i class="fa-solid fa-glass-water-droplet"></i></div>
-          <div class="kpi-content">
-            <h3>Total Cilindros</h3>
-            <p id="kpi-total">0</p>
+      <!-- DIAGRAMAS DE AVANCE (Lote Activo y Avance Diario) -->
+      <section class="kpi-grid full-width" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px;">
+        <div class="card">
+          <h2><i class="fa-solid fa-chart-pie"></i> Avance del Lote Activo</h2>
+          <div class="chart-container" style="position: relative; height: 220px;">
+            <canvas id="qualityChart"></canvas>
+            <div id="chart-center-text" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; font-weight: bold; font-size: 1.2rem; pointer-events: none;">0%</div>
           </div>
         </div>
 
-        <div class="kpi-card">
-          <div class="kpi-icon green"><i class="fa-solid fa-circle-check"></i></div>
-          <div class="kpi-content">
-            <h3>Conformes</h3>
-            <p id="kpi-conformes">0</p>
-          </div>
-        </div>
-
-        <div class="kpi-card">
-          <div class="kpi-icon red"><i class="fa-solid fa-circle-xmark"></i></div>
-          <div class="kpi-content">
-            <h3>No Conformes</h3>
-            <p id="kpi-noconformes">0</p>
-          </div>
-        </div>
-
-        <div class="kpi-card">
-          <div class="kpi-icon cyan"><i class="fa-solid fa-bolt"></i></div>
-          <div class="kpi-content">
-            <h3>Conductividad Prom.</h3>
-            <p id="kpi-cond">0.0</p>
+        <div class="card">
+          <h2><i class="fa-solid fa-chart-pie"></i> Avance de Cilindros Diario</h2>
+          <div class="chart-container" style="position: relative; height: 220px;">
+            <canvas id="dailyChart"></canvas>
+            <div id="daily-chart-center-text" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; font-weight: bold; font-size: 1.2rem; pointer-events: none;">0</div>
           </div>
         </div>
       </section>
 
-      <!-- Formulario + Gráfico (Operador y Admin/Jefe) -->
-      <main class="main-grid">
+      <!-- 2. CALENDARIO DE ENVASADO -->
+      <section id="sec-calendario" class="card full-width">
+        <div class="table-header">
+          <h2><i class="fa-solid fa-calendar-days"></i> Calendario de Envasado</h2>
+          <div class="calendar-controls" style="display: flex; gap: 10px; align-items: center;">
+            <select id="cal-vista" onchange="renderizarCalendario()">
+              <option value="dia">Vista Día</option>
+              <option value="semana">Vista Semana</option>
+              <option value="mes" selected>Vista Mes</option>
+              <option value="anio">Vista Año</option>
+            </select>
+            <input type="date" id="cal-fecha-picker" onchange="renderizarCalendario()">
+          </div>
+        </div>
+        
+        <div id="calendar-render-area" class="calendar-grid-wrapper" style="margin-top: 15px;">
+          <!-- Se genera dinámicamente -->
+        </div>
+      </section>
 
-        <!-- Formulario (Solo Operadores) -->
-        <section id="sec-formulario" class="card">
-          <h2><i class="fa-solid fa-pen-to-square"></i> Registro de Control (CPFO-16)</h2>
-          
-          <form id="form-agua">
+      <!-- PANEL DE CONTROL DE ENVASADO Y REGISTROS POR FECHA -->
+      <section id="panel-envasado-fecha" class="card full-width" style="display: none;">
+        <div class="table-header">
+          <h2 id="titulo-panel-fecha"><i class="fa-solid fa-clock"></i> Registro de Envasado - Fecha</h2>
+          <button class="btn btn-secondary" onclick="cerrarPanelFecha()">Ocultar Panel</button>
+        </div>
+
+        <!-- Botones de Inicio/Fin de Envasado -->
+        <div class="envasado-actions" style="margin: 15px 0; display: flex; gap: 15px; align-items: center;">
+          <button id="btn-iniciar-envasado" class="btn btn-success" onclick="iniciarEnvasado()">
+            <i class="fa-solid fa-play"></i> Iniciar Envasado
+          </button>
+          <button id="btn-finalizar-envasado" class="btn btn-danger" onclick="finalizarEnvasado()" disabled>
+            <i class="fa-solid fa-stop"></i> Finalizar Envasado
+          </button>
+          <span id="label-estado-envasado" class="badge" style="background:#6c757d; color:#fff; font-size:0.9rem;">Envasado No Iniciado</span>
+        </div>
+
+        <!-- Formulario (Solo activo si envasado ha iniciado) -->
+        <div id="sec-formulario-dia" style="display: none; margin-bottom: 25px;">
+          <h3><i class="fa-solid fa-pen-to-square"></i> Formulario de Registro CPFO-16</h3>
+          <form id="form-agua-dia">
             <div class="form-row">
               <div class="form-group">
                 <label for="procedencia">Procedencia</label>
@@ -193,34 +206,27 @@
                 </select>
               </div>
               <div class="form-group">
-                <label for="fechaProd">Fecha de Producción</label>
-                <input type="date" id="fechaProd" required>
+                <label for="conductividad">Conductividad Eléctrica a 25ºc (Máx. 70.0)</label>
+                <input type="number" id="conductividad" step="0.01" placeholder="Valor" required>
               </div>
             </div>
 
             <div class="form-row">
-              <div class="form-group">
-                <label for="conductividad">Conductividad Eléctrica a 25ºc (Máx. 70.0)</label>
-                <input type="number" id="conductividad" step="0.01" placeholder="Ingrese valor" required>
-              </div>
               <div class="form-group">
                 <label for="dureza">Dureza Total (ppm) <small>(Máx. 2.0)</small></label>
                 <input type="number" id="dureza" step="0.01" placeholder="0 - 2.0" required>
               </div>
-            </div>
-
-            <div class="form-row">
               <div class="form-group">
                 <label for="ph">pH <small>(6.0 - 7.0)</small></label>
                 <input type="number" id="ph" step="0.01" placeholder="6.0 - 7.0" required>
               </div>
+            </div>
+
+            <div class="form-row">
               <div class="form-group">
                 <label for="cloro">Cloro Residual (ppm) <small>(&lt; 0.01)</small></label>
                 <input type="number" id="cloro" step="0.001" placeholder="< 0.01" required>
               </div>
-            </div>
-
-            <div class="form-row">
               <div class="form-group">
                 <label for="olor">Olor</label>
                 <select id="olor" required>
@@ -241,67 +247,28 @@
               <i class="fa-solid fa-floppy-disk"></i> Registrar Cilindro
             </button>
           </form>
-        </section>
-
-        <!-- Panel Gráfico de Liberación con Porcentaje Dinámico -->
-        <section id="sec-grafico" class="card">
-          <h2><i class="fa-solid fa-chart-pie"></i> Avance del Lote Activo</h2>
-          <div class="chart-container" style="position: relative;">
-            <canvas id="qualityChart"></canvas>
-            <div id="chart-center-text" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; font-weight: bold; font-size: 1.2rem; pointer-events: none;">
-              0%
-            </div>
-          </div>
-          <div class="doc-footer-info">
-            <p><strong>Producto:</strong> Agua de ósmosis inversa</p>
-            <p><strong>Peso por cilindro:</strong> 200 Kg</p>
-          </div>
-        </section>
-
-      </main>
-
-      <!-- Tabla del Lote Activo CPFO-16 -->
-      <section class="card full-width">
-        <div class="table-header">
-          <h2><i class="fa-solid fa-table"></i> Planilla de Liberación (Lote Activo CPFO-16)</h2>
-          <div class="table-actions">
-            <input type="text" id="searchInput" placeholder="Buscar # Cilindro...">
-            <button id="btnExport" class="btn btn-secondary">
-              <i class="fa-solid fa-file-excel"></i> Exportar CSV
-            </button>
-          </div>
         </div>
 
+        <!-- Tabla de Liberación del Día -->
         <div class="table-responsive">
-          <table>
+          <table class="tabla-envasado-dia">
             <thead>
               <tr>
                 <th># Cilindro</th>
-                <th>Fecha Producción</th>
+                <th>Fecha/Hora Reg.</th>
                 <th>Responsable</th>
-                <th>Conductividad<br><small>a 25ºc (Máx. 70.0)</small></th>
-                <th>Dureza Total<br><small>Máx. 2.0 ppm</small></th>
-                <th>pH<br><small>6.0 - 7.0</small></th>
-                <th>Cloro Residual<br><small>&lt; 0.01 ppm</small></th>
+                <th>Conductividad</th>
+                <th>Dureza</th>
+                <th>pH</th>
+                <th>Cloro</th>
                 <th>Olor</th>
                 <th>Color</th>
                 <th>Conforme</th>
+                <th>Estado Envío</th>
                 <th class="col-accion">Acción</th>
               </tr>
             </thead>
-            <tbody id="tabla-body">
-              <!-- Filas dinámicas desde Supabase -->
-            </tbody>
-            <tfoot>
-              <tr class="row-promedio">
-                <td colspan="3"><strong>Promedio Lote Activo</strong></td>
-                <td id="prom-cond">-</td>
-                <td id="prom-dureza">-</td>
-                <td id="prom-ph">-</td>
-                <td id="prom-cloro">-</td>
-                <td colspan="4"></td>
-              </tr>
-            </tfoot>
+            <tbody id="tabla-body-dia"></tbody>
           </table>
         </div>
       </section>
@@ -309,64 +276,51 @@
     </div>
   </div>
 
-  <!-- MODAL DE CONFIRMACIÓN Y OBSERVACIÓN AL COMPLETAR LOTE -->
-  <div id="modal-confirmar-lote" class="modal-overlay" style="display: none;">
-    <div class="modal-card">
+  <!-- MODAL DE SELECCIÓN DE CILINDROS DE SOLICITUD -->
+  <div id="modal-seleccionar-cilindros" class="modal-overlay" style="display: none;">
+    <div class="modal-content bitacora-content" style="max-width: 800px; width: 95%;">
       <div class="modal-header">
-        <i class="fa-solid fa-check-circle" style="font-size: 2rem; color: #28a745;"></i>
-        <h2>Confirmar Finalización de Lote</h2>
-        <p>Complete el registro de liberación para cerrar este lote.</p>
+        <h2><i class="fa-solid fa-boxes-packing"></i> Selección de Cilindros Disponibles</h2>
+        <button class="btn-close" onclick="cerrarModalSeleccionCilindros()">✕</button>
       </div>
-      <div class="form-group" style="margin-top: 15px;">
-        <label for="obs-lote-input">Observación / Nota de cierre (Opcional):</label>
-        <textarea id="obs-lote-input" rows="3" placeholder="Ingrese observaciones del lote si aplica..."></textarea>
+
+      <div class="form-group" style="margin-top: 10px;">
+        <label for="select-fecha-disponible">Fechas con Cilindros en Stock:</label>
+        <select id="select-fecha-disponible" onchange="cargarCilindrosPorFechaSeleccionada()"></select>
       </div>
-      <div class="modal-actions" style="margin-top: 15px;">
-        <button class="btn btn-secondary" onclick="cerrarModalConfirmarLote()">Cancelar</button>
-        <button class="btn btn-primary" onclick="guardarConfirmacionLote()">Confirmar y Cerrar</button>
+
+      <div class="table-responsive" style="max-height: 250px; overflow-y: auto; margin-top: 15px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Seleccionar</th>
+              <th># Cilindro</th>
+              <th>Fecha Registro</th>
+              <th>Conductividad</th>
+              <th>pH</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody id="tabla-body-cilindros-disponibles"></tbody>
+        </table>
+      </div>
+
+      <div class="modal-actions" style="margin-top: 20px;">
+        <button class="btn btn-secondary" onclick="cerrarModalSeleccionCilindros()">Cancelar</button>
+        <button class="btn btn-primary" onclick="guardarCilindrosEnSolicitud()">Asignar a Solicitud</button>
+        <button class="btn btn-primary" onclick="completarSolicitudConCilindros()">Completar y Despachar</button>
       </div>
     </div>
   </div>
 
-  <!-- MODAL DE BITÁCORA Y OBSERVACIONES -->
-  <div id="modal-bitacora" class="modal-overlay" style="display: none;">
-    <div class="modal-content bitacora-content">
-      <div class="modal-header">
-        <h2>📋 Bitácora de Observaciones y Sugerencias</h2>
-        <button class="btn-close" onclick="cerrarBitacora()">✕</button>
-      </div>
-
-      <!-- Formulario para agregar nuevo reporte -->
-      <form onsubmit="agregarObservacionBitacora(event)" class="bitacora-form">
-        <div class="form-group">
-          <label for="bitacora-texto">Nuevo Reporte / Observación:</label>
-          <textarea id="bitacora-texto" rows="3" placeholder="Escriba su observación, sugerencia o reporte de turno..." required></textarea>
-        </div>
-        <button type="submit" class="btn btn-primary">➕ Publicar Observación</button>
-      </form>
-
-      <hr>
-
-      <!-- Lista de registros de la bitácora -->
-      <h3>Historial de Registros</h3>
-      <div id="lista-bitacora" class="bitacora-list">
-        <!-- Se carga dinámicamente desde Supabase -->
-      </div>
-
-      <div class="modal-actions">
-        <button class="btn btn-secondary" onclick="cerrarBitacora()">Cerrar</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- MODAL PARA VER CILINDROS DE UN LOTE COMPLETADO -->
+  <!-- MODAL PARA VER TABLA DE CILINDROS DE SOLICITUD -->
   <div id="modal-ver-lote" class="modal-overlay" style="display: none;">
     <div class="modal-content bitacora-content" style="max-width: 900px; width: 95%;">
       <div class="modal-header">
         <i class="fa-solid fa-table-list" style="font-size: 1.5rem; color: #007bff; margin-right: 8px;"></i>
         <div>
-          <h2 id="modal-lote-titulo" style="margin: 0;">Cilindros del Lote</h2>
-          <small id="modal-lote-subtitulo" style="color: #666;">Detalle de mediciones de agua tratada</small>
+          <h2 id="modal-lote-titulo" style="margin: 0;">Cilindros de la Solicitud</h2>
+          <small id="modal-lote-subtitulo" style="color: #666;">Detalle de mediciones vinculadas</small>
         </div>
         <button class="btn-close" onclick="cerrarModalLote()">✕</button>
       </div>
@@ -376,7 +330,7 @@
           <thead>
             <tr>
               <th># Cilindro</th>
-              <th>Fecha</th>
+              <th>Fecha Envasado</th>
               <th>Responsable</th>
               <th>Conductividad</th>
               <th>Dureza</th>
@@ -385,11 +339,10 @@
               <th>Olor</th>
               <th>Color</th>
               <th>Conforme</th>
+              <th>Estado Envío</th>
             </tr>
           </thead>
-          <tbody id="tabla-body-modal-lote">
-            <!-- Se llena dinámicamente -->
-          </tbody>
+          <tbody id="tabla-body-modal-lote"></tbody>
         </table>
       </div>
 
@@ -399,7 +352,6 @@
     </div>
   </div>
 
-  <!-- Script principal de la lógica -->
   <script src="script.js"></script>
 </body>
 </html>
