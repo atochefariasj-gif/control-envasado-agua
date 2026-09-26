@@ -1,45 +1,46 @@
 // ==========================================
-// 1. CONFIGURACIÓN E INICIALIZACIÓN DE SUPABASE Y FIREBASE
+// 1. CONFIGURACIÓN DE SUPABASE Y FIREBASE
 // ==========================================
 const SUPABASE_URL = 'https://mpomtdtmdsggybhnvdof.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_5Z828OdqG-DuZNcgYJq_lQ_eMp-zeBk';
 
-// Crear el cliente de Supabase
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// Configuración de Firebase para Push Notifications (SDK Compat v9)
 const firebaseConfig = {
   apiKey: "AIzaSyBoAEj2D9wUNZrRFSmdxOM1scqm0urNfRo",
   authDomain: "control-envasado-agua.firebaseapp.com",
   projectId: "control-envasado-agua",
   storageBucket: "control-envasado-agua.firebasestorage.app",
   messagingSenderId: "337600183929",
-  appId: "1:337600183929:web:1f019b401521161a2e1ea8",
-  measurementId: "G-DJ3LZ96XP7"
+  appId: "1:337600183929:web:1f019b401521161a2e1ea8"
 };
 
-// Clave pública VAPID de Firebase Cloud Messaging
 const VAPID_KEY = "BF_3H1pli2NFqoTH2corhZst279V0S3f1Hhoyw5tEQb9cNKmNEQMJzhceaYtQT5LWVfB8upVOggBhiaG7Ikz6s8";
 
 let messaging = null;
-
-// Inicializar Firebase Messaging si es compatible
 if (typeof firebase !== 'undefined' && firebase.messaging.isSupported()) {
   firebase.initializeApp(firebaseConfig);
   messaging = firebase.messaging();
 }
 
-// Estados globales de la aplicación
+// Estados globales
 let registros = [];
 let solicitudes = [];
-let bitacoraRegistros = [];
-let currentUser = null; // { role: 'operador'|'admin'|'jefe', nombre: '...' }
+let currentUser = null;
 let selectedRoleTemp = '';
-let chartInstance = null;
-let loteActivoId = null; // Rastrilla el Lote en curso
-let loteAConfirmar = null; // Auxiliar para modal de confirmación
 
-// Credenciales
+let chartInstance = null;
+let dailyChartInstance = null;
+let loteActivoId = null;
+
+let fechaSeleccionadaPanel = null;
+let estadoEnvasadoIniciado = false;
+let horaInicioEnvasado = null;
+let solicitudSeleccionadaModal = null;
+
+// Variable para acumular cilindros seleccionados en la sesión del modal
+let cilindrosAcumuladosParaLote = [];
+
 const CREDENTIALLS = {
   operador: {
     gustavo: { nombre: 'Gustavo Silva', pass: 'gustavo123' },
@@ -51,7 +52,6 @@ const CREDENTIALLS = {
   }
 };
 
-// Cargar opciones OW001 - OW027
 function cargarOpcionesCilindros() {
   const selectCilindro = document.getElementById('numCilindro');
   if (!selectCilindro) return;
@@ -67,106 +67,63 @@ function cargarOpcionesCilindros() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  // Asegurar vista de login inicial
-  const loginModal = document.getElementById('login-modal');
-  const appContent = document.getElementById('app-content');
-  if (loginModal) loginModal.style.display = 'flex';
-  if (appContent) appContent.style.display = 'block';
+  const picker = document.getElementById('cal-fecha-picker');
+  if (picker) picker.valueAsDate = new Date();
 
-  const elemFecha = document.getElementById('fechaProd');
-  if (elemFecha) elemFecha.valueAsDate = new Date();
-  
   cargarOpcionesCilindros();
-
-  // Registrar Service Worker para PWA y Notificaciones Push
   registrarServiceWorkerYNotificaciones();
-
-  // Inicializar el gráfico básico en fondo
-  inicializarGrafico();
-
-  // Cargar datos iniciales desde Supabase
+  
+  inicializarGraficos();
+  
   await cargarSolicitudesDesdeSupabase();
   await cargarRegistrosDesdeSupabase();
-  await cargarBitacoraDesdeSupabase();
-
-  // Suscribirse a cambios en tiempo real (Realtime)
+  
+  renderizarCalendario();
   suscribirSupabaseRealtime();
 });
 
-// ==========================================
-// 1.1 SERVICE WORKER, TOKEN FCM Y SUPABASE
-// ==========================================
 function registrarServiceWorkerYNotificaciones() {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./firebase-messaging-sw.js')
       .then((registration) => {
-        console.log('Service Worker registrado correctamente:', registration.scope);
         solicitarPermisoNotificaciones(registration);
       })
-      .catch((err) => {
-        console.error('Error al registrar Service Worker:', err);
-      });
+      .catch((err) => console.error('SW Error:', err));
   }
 }
 
 async function solicitarPermisoNotificaciones(registration) {
   if (!messaging) return;
+  if (typeof Notification === 'undefined') return;
 
   try {
     const permission = await Notification.requestPermission();
     if (permission === 'granted') {
-      const token = await messaging.getToken({
-        serviceWorkerRegistration: registration,
-        vapidKey: VAPID_KEY
-      });
-
-      if (token) {
-        await guardarTokenEnSupabase(token);
-      }
-    } else {
-      console.warn('Permiso de notificaciones denegado.');
+      const token = await messaging.getToken({ serviceWorkerRegistration: registration, vapidKey: VAPID_KEY });
+      if (token) await guardarTokenEnSupabase(token);
     }
   } catch (err) {
-    console.error('Error obteniendo token FCM:', err);
+    console.error('Error FCM:', err);
   }
-
-  // Notificación silenciosa en primer plano
-  messaging.onMessage((payload) => {
-    console.log('Notificación recibida en segundo plano/primer plano:', payload);
-  });
 }
 
 async function guardarTokenEnSupabase(tokenFCM) {
-  try {
-    const { data: existente } = await supabaseClient
-      .from('dispositivos_tokens')
-      .select('fcm_token')
-      .eq('fcm_token', tokenFCM);
+  const { data: existente } = await supabaseClient.from('dispositivos_tokens').select('fcm_token').eq('fcm_token', tokenFCM);
+  if (!existente || existente.length === 0) {
+    await supabaseClient.from('dispositivos_tokens').insert([{ fcm_token: tokenFCM, usuario: 'User_' + Math.floor(Math.random() * 1000) }]);
+  }
+}
 
-    if (!existente || existente.length === 0) {
-      const { error } = await supabaseClient
-        .from('dispositivos_tokens')
-        .insert([
-          { 
-            fcm_token: tokenFCM, 
-            usuario: 'Operador_' + Math.floor(Math.random() * 1000) 
-          }
-        ]);
-
-      if (error) {
-        console.error('Error al insertar token en Supabase:', error.message);
-      }
-    }
-  } catch (err) {
-    console.error('Error guardando token:', err);
+async function enviarNotificacionPush(titulo, cuerpo) {
+  console.log(`[Notificación simulada localmente]: ${titulo} - ${cuerpo}`);
+  if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+    new Notification(titulo, { body: cuerpo, icon: './icon-192.png' });
   }
 }
 
 // ==========================================
-// 2. CONEXIÓN Y ACCIONES SUPABASE (CRUD)
+// 2. CARGA DE DATOS DESDE SUPABASE
 // ==========================================
-
-// --- REGISTROS DE CILINDROS (Desde la nueva tabla: registros_cilindros) ---
 async function cargarRegistrosDesdeSupabase() {
   const { data, error } = await supabaseClient
     .from('registros_cilindros')
@@ -178,7 +135,8 @@ async function cargarRegistrosDesdeSupabase() {
       id: item.id,
       cilindro: item.cilindro,
       lote: item.lote_id,
-      fecha: item.fecha,
+      lote_id: item.lote_id,
+      fecha: item.fecha_envasado || item.fecha,
       responsable: item.creado_por,
       conductividad: parseFloat(item.conductividad ?? 0),
       dureza: parseFloat(item.dureza ?? 0),
@@ -186,13 +144,15 @@ async function cargarRegistrosDesdeSupabase() {
       cloro: parseFloat(item.cloro ?? 0),
       olor: item.olor,
       color: item.color,
-      conforme: item.conforme
+      conforme: item.conforme,
+      enviado: item.enviado === true || String(item.enviado) === 'true',
+      hora_inicio: item.hora_inicio,
+      hora_fin: item.hora_fin
     }));
     actualizarUI();
   }
 }
 
-// --- SOLICITUDES DE LOTES ---
 async function cargarSolicitudesDesdeSupabase() {
   const { data, error } = await supabaseClient
     .from('solicitudes')
@@ -201,69 +161,34 @@ async function cargarSolicitudesDesdeSupabase() {
 
   if (!error && data) {
     solicitudes = data;
-    
-    // Obtener el lote más reciente pendiente para asignarle los nuevos cilindros
-    const lotePendiente = solicitudes.find(s => s.estado === 'Pendiente');
+    const lotePendiente = solicitudes.find(s => s.estado === 'Pendiente' || s.estado === 'En Proceso');
     loteActivoId = lotePendiente ? lotePendiente.id : null;
-
     renderSolicitudes();
   }
 }
 
-// --- BITÁCORA ---
-async function cargarBitacoraDesdeSupabase() {
-  const { data, error } = await supabaseClient
-    .from('bitacora')
-    .select('*')
-    .order('created_at', { ascending: false });
-
-  if (!error && data) {
-    bitacoraRegistros = data.map(b => ({
-      id: b.id,
-      usuario: b.usuario,
-      rol: b.rol,
-      texto: b.texto,
-      fechaHora: new Date(b.created_at).toLocaleString('es-PE')
-    }));
-    renderizarBitacora();
-  }
-}
-
 function suscribirSupabaseRealtime() {
-  // Escuchar cambios en la tabla de solicitudes
-  supabaseClient
-    .channel('public:solicitudes')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'solicitudes' }, () => {
-      cargarSolicitudesDesdeSupabase();
-    })
-    .subscribe();
+  supabaseClient.channel('public:solicitudes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'solicitudes' }, async () => {
+      await cargarSolicitudesDesdeSupabase();
+      actualizarUI();
+    }).subscribe();
 
-  // Escuchar cambios en la nueva tabla de registros_cilindros
-  supabaseClient
-    .channel('public:registros_cilindros')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'registros_cilindros' }, () => {
-      cargarRegistrosDesdeSupabase();
-    })
-    .subscribe();
-
-  // Escuchar cambios en la tabla bitácora
-  supabaseClient
-    .channel('public:bitacora')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'bitacora' }, () => {
-      cargarBitacoraDesdeSupabase();
-    })
-    .subscribe();
+  supabaseClient.channel('public:registros_cilindros')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'registros_cilindros' }, async () => {
+      await cargarRegistrosDesdeSupabase();
+      actualizarUI();
+    }).subscribe();
 }
 
 // ==========================================
-// 3. LÓGICA DE ROLES Y LOGIN
+// 3. SELECCIÓN DE ROL Y AUTENTICACIÓN
 // ==========================================
 function seleccionarRol(rol) {
   selectedRoleTemp = rol;
   document.getElementById('role-selection').style.display = 'none';
   document.getElementById('form-login').style.display = 'flex';
   document.getElementById('login-error').style.display = 'none';
-  document.getElementById('login-pass').value = '';
 
   const groupUsuario = document.getElementById('group-usuario');
   const labelUsuario = document.getElementById('label-usuario');
@@ -274,10 +199,7 @@ function seleccionarRol(rol) {
     loginTitle.textContent = 'Acceso Operador';
     labelUsuario.textContent = 'Operador de Turno';
     groupUsuario.style.display = 'flex';
-    selectUsuario.innerHTML = `
-      <option value="gustavo">Gustavo Silva</option>
-      <option value="paul">Paul Hernandez</option>
-    `;
+    selectUsuario.innerHTML = `<option value="gustavo">Gustavo Silva</option><option value="paul">Paul Hernandez</option>`;
   } else if (rol === 'admin') {
     loginTitle.textContent = 'Acceso Administrador';
     groupUsuario.style.display = 'none';
@@ -285,9 +207,7 @@ function seleccionarRol(rol) {
     loginTitle.textContent = 'Acceso Jefe de Producción';
     labelUsuario.textContent = 'Jefe de Producción';
     groupUsuario.style.display = 'flex';
-    selectUsuario.innerHTML = `
-      <option value="karent">Karent Namuche</option>
-    `;
+    selectUsuario.innerHTML = `<option value="karent">Karent Namuche</option>`;
   }
 }
 
@@ -306,25 +226,19 @@ function procesarLogin(e) {
     if (pass === opData.pass) {
       currentUser = { role: 'operador', nombre: opData.nombre };
       iniciarSesionApp();
-    } else {
-      mostrarErrorLogin();
-    }
+    } else mostrarErrorLogin();
   } else if (selectedRoleTemp === 'admin') {
     if (pass === CREDENTIALLS.admin.pass) {
       currentUser = { role: 'admin', nombre: 'Administrador' };
       iniciarSesionApp();
-    } else {
-      mostrarErrorLogin();
-    }
+    } else mostrarErrorLogin();
   } else if (selectedRoleTemp === 'jefe') {
     const userKey = document.getElementById('login-user').value;
     const jefeData = CREDENTIALLS.jefe[userKey];
     if (pass === jefeData.pass) {
       currentUser = { role: 'jefe', nombre: jefeData.nombre };
       iniciarSesionApp();
-    } else {
-      mostrarErrorLogin();
-    }
+    } else mostrarErrorLogin();
   }
 }
 
@@ -348,132 +262,88 @@ function iniciarSesionApp() {
 
 function cerrarSesion() {
   currentUser = null;
-  document.getElementById('app-content').style.display = 'block'; 
   document.getElementById('login-modal').style.display = 'flex';
+  document.getElementById('app-content').style.display = 'none';
   volverARoles();
 }
 
 function aplicarPermisosPorRol() {
-  const secForm = document.getElementById('sec-formulario');
-  const secSolicitudes = document.getElementById('sec-solicitudes');
   const formSolicitud = document.getElementById('form-solicitud');
-  const btnExport = document.getElementById('btnExport');
-  const mainGrid = document.querySelector('.main-grid');
-
-  if (!currentUser) return;
-
-  if (secSolicitudes) secSolicitudes.style.display = 'block';
-
-  if (currentUser.role === 'operador') {
-    if (secForm) secForm.style.display = 'block';
-    if (formSolicitud) formSolicitud.style.display = 'none';
-    if (btnExport) btnExport.style.display = 'none';
-    if (mainGrid) mainGrid.classList.remove('full-width-grid');
-  } 
-  else if (currentUser.role === 'admin') {
-    if (secForm) secForm.style.display = 'none';
-    if (formSolicitud) formSolicitud.style.display = 'none';
-    if (btnExport) btnExport.style.display = 'inline-flex';
-    if (mainGrid) mainGrid.classList.add('full-width-grid');
-  } 
-  else if (currentUser.role === 'jefe') {
-    if (secForm) secForm.style.display = 'none';
+  if (currentUser && currentUser.role === 'jefe') {
     if (formSolicitud) formSolicitud.style.display = 'grid';
-    if (btnExport) btnExport.style.display = 'none';
-    if (mainGrid) mainGrid.classList.add('full-width-grid');
+  } else {
+    if (formSolicitud) formSolicitud.style.display = 'none';
   }
 }
 
 // ==========================================
-// 4. EVALUACIÓN Y REGISTRO DE CILINDROS
+// 4. SOLICITUDES CON BÚSQUEDA Y SELECCIÓN
 // ==========================================
+function renderSolicitudes() {
+  const container = document.getElementById('lista-solicitudes');
+  if (!container) return;
+  
+  const filtro = (document.getElementById('searchSolicitud')?.value || '').toLowerCase();
+  container.innerHTML = '';
 
-function evaluarConformidad(cond, dureza, ph, cloro, olor, color) {
-  const condOK = typeof cond === 'number' && !isNaN(cond) && cond <= 70.0;
-  const durezaOK = typeof dureza === 'number' && !isNaN(dureza) && dureza <= 2.0;
-  const phOK = typeof ph === 'number' && !isNaN(ph) && ph >= 6.0 && ph <= 7.0;
-  const cloroOK = typeof cloro === 'number' && !isNaN(cloro) && cloro < 0.01;
-  const olorOK = olor === 'CC';
-  const colorOK = color === 'CC';
+  const solicitudesFiltradas = solicitudes.filter(sol => 
+    sol.id.toLowerCase().includes(filtro) || (sol.fecha_completado && sol.fecha_completado.includes(filtro))
+  );
 
-  return condOK && durezaOK && phOK && cloroOK && olorOK && colorOK;
-}
+  if (solicitudesFiltradas.length === 0) {
+    container.innerHTML = '<p style="font-size: 0.85rem; color: #666;">No hay solicitudes que coincidan.</p>';
+    return;
+  }
 
-const formAgua = document.getElementById('form-agua');
-if (formAgua) {
-  formAgua.addEventListener('submit', async (e) => {
-    e.preventDefault();
-
-    const cilindro = document.getElementById('numCilindro').value;
-    const idLoteActual = loteActivoId || 'SIN_LOTE';
+  solicitudesFiltradas.forEach(sol => {
+    const estaCompletado = sol.estado === 'Completado';
+    const enProceso = sol.estado === 'En Proceso';
     
-    // Restricción: Validar que el cilindro NO esté duplicado DENTRO DEL LOTE ACTIVO
-    const registrosLoteActivo = registros.filter(r => r.lote === idLoteActual);
-    const existeEnLoteActivo = registrosLoteActivo.some(r => r.cilindro.toUpperCase() === cilindro.toUpperCase());
-    
-    if (existeEnLoteActivo) {
-      alert(`El cilindro ${cilindro} ya ha sido registrado previamente en este lote activo.`);
-      return;
+    const div = document.createElement('div');
+    div.className = `solicitud-card ${estaCompletado ? 'completada' : ''}`;
+    div.style.border = "1px solid #ddd";
+    div.style.padding = "10px";
+    div.style.marginBottom = "8px";
+    div.style.borderRadius = "6px";
+
+    let estadoBadge = '<span style="color: orange; font-weight: bold;">Pendiente</span>';
+    if (estaCompletado) {
+      estadoBadge = '<span style="color: green; font-weight: bold;">✓ Completado</span>';
+    } else if (enProceso) {
+      estadoBadge = '<span style="color: #0d6efd; font-weight: bold;">🔄 En Proceso</span>';
     }
 
-    const fecha = document.getElementById('fechaProd').value;
-    const responsable = document.getElementById('responsable').value;
-    
-    const conductividad = parseFloat(document.getElementById('conductividad').value);
-    const dureza = parseFloat(document.getElementById('dureza').value);
-    const ph = parseFloat(document.getElementById('ph').value);
-    const cloro = parseFloat(document.getElementById('cloro').value);
-    const olor = document.getElementById('olor').value;
-    const color = document.getElementById('color').value;
+    let htmlContent = `
+      <div class="solicitud-info">
+        <h4><i class="fa-solid fa-box"></i> ${sol.producto}</h4>
+        <p>ID Lote: <strong>${sol.id}</strong> | Fecha: <strong>${sol.fecha_completado || '-'}</strong></p>
+        <p>Estado: ${estadoBadge}</p>
+      </div>
+      <div class="solicitud-acciones" style="margin-top: 8px; display: flex; gap: 8px;">
+    `;
 
-    const conforme = evaluarConformidad(conductividad, dureza, ph, cloro, olor, color);
-    
-    // Generar ID único uniendo ID del Lote + Nombre del Cilindro
-    const idUnicoRegistro = `${idLoteActual}_${cilindro}`;
-
-    // Insertar en la nueva tabla dedicada: registros_cilindros
-    const { error } = await supabaseClient.from('registros_cilindros').insert([
-      {
-        id: idUnicoRegistro,
-        lote_id: idLoteActual,
-        cilindro: cilindro,
-        conductividad: conductividad,
-        dureza: dureza,
-        ph: ph,
-        cloro: cloro,
-        olor: olor,
-        color: color,
-        conforme: conforme,
-        creado_por: responsable,
-        fecha: fecha
-      }
-    ]);
-
-    if (!error) {
-      alert(`Cilindro ${cilindro} registrado con éxito en el lote ${idLoteActual} (${conforme ? 'CONFORME' : 'NO CONFORME'}).`);
-      await cargarRegistrosDesdeSupabase();
-
-      document.getElementById('numCilindro').selectedIndex = 0;
-      document.getElementById('conductividad').value = '';
-      document.getElementById('dureza').value = '';
-      document.getElementById('ph').value = '';
-      document.getElementById('cloro').value = '';
-    } else {
-      alert("Error al guardar en Supabase: " + error.message);
+    if (estaCompletado) {
+      htmlContent += `<button class="btn btn-secondary" onclick="verTablaLoteCompletado('${sol.id}')">📊 Ver Tabla</button>`;
+    } else if (currentUser && currentUser.role === 'operador') {
+      htmlContent += `<button class="btn btn-primary" onclick="abrirModalSeleccionarCilindros('${sol.id}')">📦 Asignar Cilindros Disponibles</button>`;
     }
+
+    htmlContent += `</div>`;
+    div.innerHTML = htmlContent;
+    container.appendChild(div);
   });
 }
 
-// ==========================================
-// 5. SOLICITUD Y CONFIRMACIÓN DE LOTES
-// ==========================================
+function filtrarSolicitudes() {
+  renderSolicitudes();
+}
+
 async function crearSolicitudLote(e) {
   e.preventDefault();
   const detalle = document.getElementById('sol-cilindros').value;
   const fechaEntrega = document.getElementById('sol-fecha').value;
 
-  const siguienteCorrelativo = solicitudes.length + 1;
-  const numeroFormateado = siguienteCorrelativo.toString().padStart(3, '0');
+  const numeroFormateado = (solicitudes.length + 1).toString().padStart(3, '0');
   const idSol = `A026.261-${numeroFormateado}`;
 
   const { error } = await supabaseClient.from('solicitudes').insert([
@@ -489,430 +359,533 @@ async function crearSolicitudLote(e) {
   if (!error) {
     document.getElementById('sol-cilindros').value = '';
     document.getElementById('sol-fecha').value = '';
-    await registrarEnBitacoraAutomático(`Nueva solicitud de lote creada: ${idSol} - ${detalle}`);
+    await enviarNotificacionPush("Nueva Solicitud de Lote", `Lote ${idSol} solicitado para ${fechaEntrega}`);
     await cargarSolicitudesDesdeSupabase();
-  } else {
-    alert("Error al crear la solicitud: " + error.message);
+    actualizarUI();
   }
 }
 
-function renderSolicitudes() {
-  const container = document.getElementById('lista-solicitudes');
-  if (!container) return;
+// ==========================================
+// 5. CALENDARIO DE ENVASADO
+// ==========================================
+function renderizarCalendario() {
+  const container = document.getElementById('calendar-render-area');
+  const vista = document.getElementById('cal-vista').value;
+  const fechaVal = document.getElementById('cal-fecha-picker').value;
+  
+  if (!container || !fechaVal) return;
+  const fechaActual = new Date(fechaVal + 'T00:00:00');
+
   container.innerHTML = '';
 
-  if (solicitudes.length === 0) {
-    container.innerHTML = '<p style="font-size: 0.85rem; color: #666;">No hay solicitudes de nuevos lotes registradas.</p>';
+  if (vista === 'dia') {
+    const div = document.createElement('div');
+    const fStr = fechaActual.toISOString().split('T')[0];
+    div.className = 'cal-day-box';
+    div.style.padding = "15px";
+    div.style.border = "1px solid #007bff";
+    div.style.borderRadius = "8px";
+    div.style.background = "#eef6ff";
+    div.innerHTML = `<h3>Fecha: ${fStr}</h3><p>Haz clic para abrir el panel de control de envasado de este día.</p>`;
+    div.onclick = () => abrirPanelFecha(fStr);
+    container.appendChild(div);
+  } else if (vista === 'mes') {
+    const grid = document.createElement('div');
+    grid.style.display = 'grid';
+    grid.style.gridTemplateColumns = 'repeat(7, 1fr)';
+    grid.style.gap = '5px';
+
+    const año = fechaActual.getFullYear();
+    const mes = fechaActual.getMonth();
+    const diasEnMes = new Date(año, mes + 1, 0).getDate();
+
+    for (let d = 1; d <= diasEnMes; d++) {
+      const diaFecha = new Date(año, mes, d);
+      const fStr = diaFecha.toISOString().split('T')[0];
+      
+      const box = document.createElement('div');
+      box.style.border = "1px solid #ccc";
+      box.style.padding = "10px";
+      box.style.textAlign = "center";
+      box.style.cursor = "pointer";
+      box.style.borderRadius = "4px";
+
+      const cilindrosDia = registros.filter(r => r.fecha === fStr);
+      if (cilindrosDia.length > 0) box.style.background = "#d4edda";
+
+      box.innerHTML = `<strong>${d}</strong><br><small>${cilindrosDia.length} Cil.</small>`;
+      box.onclick = () => abrirPanelFecha(fStr);
+      grid.appendChild(box);
+    }
+    container.appendChild(grid);
+  } else {
+    container.innerHTML = `<p style="padding:10px;">Vista ${vista.toUpperCase()} seleccionada para ${fechaVal}. Haga clic abajo para ingresar al día actual.</p>
+    <button class="btn btn-primary" onclick="abrirPanelFecha('${fechaVal}')">Abrir Día ${fechaVal}</button>`;
+  }
+}
+
+// ==========================================
+// 6. PANEL DE CONTROL DE ENVASADO Y DESPACHO
+// ==========================================
+function abrirPanelFecha(fechaStr) {
+  fechaSeleccionadaPanel = fechaStr;
+  document.getElementById('titulo-panel-fecha').innerHTML = `<i class="fa-solid fa-clock"></i> Registro de Envasado - ${fechaStr}`;
+  document.getElementById('panel-envasado-fecha').style.display = 'block';
+
+  const regDia = registros.filter(r => r.fecha === fechaStr);
+  if (regDia.length > 0 && regDia[0].hora_inicio) {
+    estadoEnvasadoIniciado = true;
+    horaInicioEnvasado = regDia[0].hora_inicio;
+    actualizarEstadoBotonesEnvasado(true);
+  } else {
+    estadoEnvasadoIniciado = false;
+    horaInicioEnvasado = null;
+    actualizarEstadoBotonesEnvasado(false);
+  }
+
+  renderTablaDia();
+  window.scrollTo({ top: document.getElementById('panel-envasado-fecha').offsetTop - 20, behavior: 'smooth' });
+}
+
+function cerrarPanelFecha() {
+  document.getElementById('panel-envasado-fecha').style.display = 'none';
+}
+
+function actualizarEstadoBotonesEnvasado(iniciado) {
+  const btnIni = document.getElementById('btn-iniciar-envasado');
+  const btnFin = document.getElementById('btn-finalizar-envasado');
+  const label = document.getElementById('label-estado-envasado');
+  const formDia = document.getElementById('sec-formulario-dia');
+
+  if (iniciado) {
+    btnIni.disabled = true;
+    btnFin.disabled = false;
+    label.textContent = "Envasado En Curso";
+    label.style.background = "#28a745";
+    if (currentUser && currentUser.role === 'operador') formDia.style.display = 'block';
+  } else {
+    btnIni.disabled = false;
+    btnFin.disabled = true;
+    label.textContent = "Envasado No Iniciado";
+    label.style.background = "#6c757d";
+    formDia.style.display = 'none';
+  }
+}
+
+async function iniciarEnvasado() {
+  const ahora = new Date().toTimeString().split(' ')[0];
+  horaInicioEnvasado = ahora;
+  estadoEnvasadoIniciado = true;
+  actualizarEstadoBotonesEnvasado(true);
+
+  await enviarNotificacionPush("Inicio de Envasado", `Se inició el envasado para la fecha ${fechaSeleccionadaPanel} a las ${ahora}`);
+}
+
+async function finalizarEnvasado() {
+  const ahora = new Date().toTimeString().split(' ')[0];
+  
+  const { error } = await supabaseClient
+    .from('registros_cilindros')
+    .update({ hora_fin: ahora })
+    .eq('fecha_envasado', fechaSeleccionadaPanel);
+
+  if (error) {
+    alert("Error al finalizar envasado: " + error.message);
     return;
   }
 
-  solicitudes.forEach(sol => {
-    const esOperador = currentUser && currentUser.role === 'operador';
-    const estaCompletado = sol.estado === 'Completado';
+  estadoEnvasadoIniciado = false;
+  actualizarEstadoBotonesEnvasado(false);
 
-    const div = document.createElement('div');
-    div.className = `solicitud-card ${estaCompletado ? 'completada' : ''}`;
-    
-    let htmlContent = `
-      <div class="solicitud-info">
-        <h4><i class="fa-solid fa-box"></i> ${sol.producto}</h4>
-        <p>ID Lote: <strong>${sol.id}</strong> | Requerido para: <strong>${sol.fecha_completado || '-'}</strong></p>
-        <p>Estado: ${estaCompletado ? '<span style="color: green; font-weight: bold;">✓ Completado y Confirmado</span>' : '<span style="color: orange; font-weight: bold;">Pendiente (En curso)</span>'}</p>
-        ${sol.observacion ? `<p style="font-size: 0.8rem; color: #555;"><em>Obs: ${sol.observacion}</em></p>` : ''}
-      </div>
-      <div class="solicitud-acciones" style="display: flex; gap: 8px; align-items: center;">
-    `;
+  await enviarNotificacionPush("Finalización de Envasado", `Se finalizó el envasado para la fecha ${fechaSeleccionadaPanel} a las ${ahora}`);
+  
+  await cargarRegistrosDesdeSupabase();
+  renderTablaDia();
+  actualizarUI();
+}
 
-    if (estaCompletado) {
-      htmlContent += `
-        <button class="btn btn-secondary" onclick="verTablaLoteCompletado('${sol.id}')" style="font-size: 0.8rem; padding: 6px 12px; height: fit-content; cursor: pointer;">
-          📊 Ver Tabla
-        </button>
-      `;
-    } else if (esOperador) {
-      htmlContent += `
-        <button class="btn btn-success" onclick="abrirModalConfirmarLote('${sol.id}')">
-          ✅ Confirmar Lote Completado
-        </button>
-      `;
+const formAguaDia = document.getElementById('form-agua-dia');
+if (formAguaDia) {
+  formAguaDia.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!estadoEnvasadoIniciado) {
+      alert("Debe pulsar 'Iniciar Envasado' para poder registrar cilindros.");
+      return;
     }
 
-    htmlContent += `</div>`;
-    div.innerHTML = htmlContent;
-    container.appendChild(div);
+    const cilindro = document.getElementById('numCilindro').value;
+    const conductividad = parseFloat(document.getElementById('conductividad').value);
+    const dureza = parseFloat(document.getElementById('dureza').value);
+    const ph = parseFloat(document.getElementById('ph').value);
+    const cloro = parseFloat(document.getElementById('cloro').value);
+    const olor = document.getElementById('olor').value;
+    const color = document.getElementById('color').value;
+
+    const conforme = (conductividad <= 70.0 && dureza <= 2.0 && ph >= 6.0 && ph <= 7.0 && cloro < 0.01 && olor === 'CC' && color === 'CC');
+    const idUnico = `${fechaSeleccionadaPanel}_${cilindro}`;
+
+    const nombreUsuario = currentUser ? currentUser.nombre : 'Operador';
+
+    const { error } = await supabaseClient.from('registros_cilindros').insert([{
+      id: idUnico,
+      lote_id: loteActivoId || 'STOCK_GENERAL',
+      cilindro: cilindro,
+      conductividad: conductividad,
+      dureza: dureza,
+      ph: ph,
+      cloro: cloro,
+      olor: olor,
+      color: color,
+      conforme: conforme,
+      creado_por: nombreUsuario,
+      fecha_envasado: fechaSeleccionadaPanel,
+      fecha: fechaSeleccionadaPanel,
+      hora_inicio: horaInicioEnvasado,
+      enviado: false
+    }]);
+
+    if (!error) {
+      document.getElementById('numCilindro').selectedIndex = 0;
+      document.getElementById('conductividad').value = '';
+      document.getElementById('dureza').value = '';
+      document.getElementById('ph').value = '';
+      document.getElementById('cloro').value = '';
+      
+      await cargarRegistrosDesdeSupabase();
+      renderTablaDia();
+      actualizarUI();
+    } else {
+      alert("Error guardando registro: " + error.message);
+    }
   });
 }
 
-function abrirModalConfirmarLote(idSolicitud) {
-  loteAConfirmar = idSolicitud;
-  document.getElementById('obs-lote-input').value = '';
-  document.getElementById('modal-confirmar-lote').style.display = 'flex';
-}
+function renderTablaDia() {
+  const tbody = document.getElementById('tabla-body-dia');
+  if (!tbody) return;
+  tbody.innerHTML = '';
 
-function cerrarModalConfirmarLote() {
-  loteAConfirmar = null;
-  document.getElementById('modal-confirmar-lote').style.display = 'none';
-}
+  const registrosDia = registros.filter(r => r.fecha === fechaSeleccionadaPanel);
 
-async function guardarConfirmacionLote() {
-  if (!loteAConfirmar) return;
-
-  const observacion = document.getElementById('obs-lote-input').value.trim();
-
-  const { error } = await supabaseClient
-    .from('solicitudes')
-    .update({ 
-      estado: 'Completado', 
-      completado_por: currentUser ? currentUser.nombre : 'Operador',
-      observacion: observacion || null
-    })
-    .eq('id', loteAConfirmar);
-
-  if (!error) {
-    await registrarEnBitacoraAutomático(`El lote #${loteAConfirmar} fue completado por ${currentUser ? currentUser.nombre : 'Operador'}.${observacion ? ' Obs: ' + observacion : ''}`);
-    cerrarModalConfirmarLote();
-    await cargarSolicitudesDesdeSupabase();
-    await cargarRegistrosDesdeSupabase();
-    alert("¡El lote se ha marcado como completado correctamente!");
-  } else {
-    alert("Error al confirmar el lote: " + error.message);
+  if (registrosDia.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;">No hay cilindros registrados para la fecha ${fechaSeleccionadaPanel}.</td></tr>`;
+    return;
   }
+
+  registrosDia.forEach(r => {
+    const tr = document.createElement('tr');
+    if (r.enviado) {
+      tr.style.backgroundColor = '#d1e7dd';
+    }
+
+    tr.innerHTML = `
+      <td><strong>${r.cilindro}</strong></td>
+      <td>${r.fecha} ${r.hora_inicio || ''}</td>
+      <td>${r.responsable || '-'}</td>
+      <td>${r.conductividad}</td>
+      <td>${r.dureza}</td>
+      <td>${r.ph}</td>
+      <td>${r.cloro}</td>
+      <td>${r.olor}</td>
+      <td>${r.color}</td>
+      <td><span class="badge ${r.conforme ? 'badge-success' : 'badge-danger'}">${r.conforme ? 'SI' : 'NO'}</span></td>
+      <td><strong>${r.enviado ? 'ENVIADO' : 'EN STOCK'}</strong></td>
+      <td class="col-accion">
+        ${currentUser && currentUser.role === 'admin' ? `<button class="btn-delete" onclick="eliminarRegistro('${r.id}')"><i class="fa-solid fa-trash"></i></button>` : '-'}
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
 }
 
 async function eliminarRegistro(id) {
-  if (!currentUser || currentUser.role !== 'admin') {
-    alert('Acceso Denegado: Solo el administrador puede eliminar registros.');
-    return;
-  }
-  if (confirm('¿Eliminar este registro de cilindro?')) {
+  if (confirm("¿Eliminar registro?")) {
     await supabaseClient.from('registros_cilindros').delete().eq('id', id);
     await cargarRegistrosDesdeSupabase();
+    renderTablaDia();
+    actualizarUI();
   }
 }
 
 // ==========================================
-// 6. RENDERIZADO TABLA, KPIS Y GRÁFICO
+// 7. VINCULACIÓN Y ASIGNACIÓN DE CILINDROS DE MULTIPLES FECHAS
 // ==========================================
-function actualizarUI() {
-  const registrosLoteActivo = registros.filter(r => r.lote === (loteActivoId || 'SIN_LOTE'));
-
-  renderTabla(registrosLoteActivo);
-  actualizarKPIs(registrosLoteActivo);
-  actualizarGrafico(registrosLoteActivo);
-  renderSolicitudes();
-}
-
-function renderTabla(datosLoteActivo) {
-  const tablaBody = document.getElementById('tabla-body');
-  if (!tablaBody) return;
-  tablaBody.innerHTML = '';
-
-  const colAccionHeader = document.querySelectorAll('.col-accion');
+function abrirModalSeleccionarCilindros(idSolicitud) {
+  solicitudSeleccionadaModal = String(idSolicitud).trim();
+  cilindrosAcumuladosParaLote = []; // Reiniciar acumulador
   
-  if (currentUser && currentUser.role === 'admin') {
-    colAccionHeader.forEach(el => el.style.display = 'table-cell');
-  } else {
-    colAccionHeader.forEach(el => el.style.display = 'none');
-  }
+  const selectFecha = document.getElementById('select-fecha-disponible');
+  if (selectFecha) {
+    selectFecha.innerHTML = '<option value="TODAS">-- Ver Todas las Fechas --</option>';
 
-  if (datosLoteActivo.length === 0) {
-    tablaBody.innerHTML = `<tr><td colspan="11" style="text-align: center; color: #777;">No hay cilindros registrados en el lote activo.</td></tr>`;
-    limpiarPromedios();
-    return;
-  }
+    // Extraer fechas con cilindros que sigan en Stock (no enviados)
+    const fechasDisponibles = [...new Set(
+      registros
+        .filter(r => !r.enviado)
+        .map(r => r.fecha)
+    )];
 
-  datosLoteActivo.forEach(item => {
-    const tr = document.createElement('tr');
-    const badgeClass = item.conforme ? 'badge-success' : 'badge-danger';
-    const estadoTexto = item.conforme ? 'SI' : 'NO';
-
-    let htmlRow = `
-      <td><strong>${item.cilindro}</strong></td>
-      <td>${item.fecha || '-'}</td>
-      <td>${item.responsable || '-'}</td>
-      <td>${item.conductividad}</td>
-      <td>${item.dureza}</td>
-      <td>${item.ph}</td>
-      <td>${item.cloro}</td>
-      <td>${item.olor}</td>
-      <td>${item.color}</td>
-      <td><span class="badge ${badgeClass}">${estadoTexto}</span></td>
-    `;
-
-    if (currentUser && currentUser.role === 'admin') {
-      htmlRow += `
-        <td class="col-accion">
-          <button class="btn-delete" onclick="eliminarRegistro('${item.id}')">
-            <i class="fa-solid fa-trash"></i>
-          </button>
-        </td>
-      `;
-    }
-
-    tr.innerHTML = htmlRow;
-    tablaBody.appendChild(tr);
-  });
-
-  calcularPromedios(datosLoteActivo);
-}
-
-function calcularPromedios(datos) {
-  const count = datos.length;
-  if (count === 0) return limpiarPromedios();
-
-  const sumCond = datos.reduce((a, b) => a + b.conductividad, 0);
-  const sumDureza = datos.reduce((a, b) => a + b.dureza, 0);
-  const sumPh = datos.reduce((a, b) => a + b.ph, 0);
-  const sumCloro = datos.reduce((a, b) => a + b.cloro, 0);
-
-  const eCond = document.getElementById('prom-cond');
-  const eDur = document.getElementById('prom-dureza');
-  const ePh = document.getElementById('prom-ph');
-  const eClo = document.getElementById('prom-cloro');
-
-  if (eCond) eCond.textContent = (sumCond / count).toFixed(2);
-  if (eDur) eDur.textContent = (sumDureza / count).toFixed(2);
-  if (ePh) ePh.textContent = (sumPh / count).toFixed(2);
-  if (eClo) eClo.textContent = (sumCloro / count).toFixed(3);
-}
-
-function limpiarPromedios() {
-  ['prom-cond', 'prom-dureza', 'prom-ph', 'prom-cloro'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.textContent = '-';
-  });
-}
-
-function actualizarKPIs(datosLoteActivo) {
-  const conformes = datosLoteActivo.filter(r => r.conforme).length;
-  const noConformes = datosLoteActivo.filter(r => !r.conforme).length;
-  const promCond = datosLoteActivo.length > 0 
-    ? (datosLoteActivo.reduce((a, b) => a + b.conductividad, 0) / datosLoteActivo.length).toFixed(1)
-    : '0.0';
-
-  const eTot = document.getElementById('kpi-total');
-  const eConf = document.getElementById('kpi-conformes');
-  const eNoConf = document.getElementById('kpi-noconformes');
-  const eCond = document.getElementById('kpi-cond');
-
-  if (eTot) eTot.textContent = datosLoteActivo.length;
-  if (eConf) eConf.textContent = conformes;
-  if (eNoConf) eNoConf.textContent = noConformes;
-  if (eCond) eCond.textContent = promCond;
-}
-
-function inicializarGrafico() {
-  const canvas = document.getElementById('qualityChart');
-  if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  if (chartInstance) chartInstance.destroy();
-
-  chartInstance = new Chart(ctx, {
-    type: 'doughnut',
-    data: {
-      labels: ['Conforme', 'No Conforme', 'Restantes'],
-      datasets: [{
-        data: [0, 0, 100],
-        backgroundColor: ['#15803d', '#dc2626', '#e5e7eb']
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      cutout: '75%',
-      plugins: { legend: { position: 'bottom' } }
-    }
-  });
-}
-
-function actualizarGrafico(datosLoteActivo = []) {
-  if (!chartInstance) return;
-
-  const conformes = datosLoteActivo.filter(r => r.conforme).length;
-  const noConformes = datosLoteActivo.filter(r => !r.conforme).length;
-  const totalRegistrados = datosLoteActivo.length;
-
-  // Obtener objetivo desde el lote activo
-  const lotePendiente = solicitudes.find(s => s.id === loteActivoId);
-  let totalEsperado = 27; // Valor por defecto
-
-  if (lotePendiente && lotePendiente.producto) {
-    const match = lotePendiente.producto.match(/\((\d+)\s*cilindros?\)/i);
-    if (match && match[1]) {
-      totalEsperado = parseInt(match[1], 10);
-    }
-  }
-
-  const restantes = Math.max(0, totalEsperado - totalRegistrados);
-  const porcentajeAvance = totalEsperado > 0 ? Math.round((totalRegistrados / totalEsperado) * 100) : 0;
-
-  chartInstance.data.datasets[0].data = [conformes, noConformes, restantes];
-  chartInstance.update();
-
-  const centerText = document.getElementById('chart-center-text');
-  if (centerText) {
-    centerText.textContent = `${porcentajeAvance}%`;
-  }
-}
-
-// ==========================================
-// MODAL DE LOTE COMPLETADO (OPTIMIZADO)
-// ==========================================
-function verTablaLoteCompletado(idLote) {
-  const modal = document.getElementById('modal-ver-lote');
-  const bodyModal = document.getElementById('tabla-body-modal-lote');
-  const titulo = document.getElementById('modal-lote-titulo');
-  const subtitulo = document.getElementById('modal-lote-subtitulo');
-
-  if (!modal || !bodyModal) {
-    console.error("No se encontró la estructura del modal en el HTML.");
-    return;
-  }
-
-  const cilindrosLote = registros.filter(r => r.lote === idLote);
-  
-  if (titulo) titulo.textContent = `Cilindros del Lote: ${idLote}`;
-  if (subtitulo) subtitulo.textContent = `Total cilindros registrados: ${cilindrosLote.length}`;
-  
-  bodyModal.innerHTML = '';
-
-  if (cilindrosLote.length === 0) {
-    bodyModal.innerHTML = `<tr><td colspan="10" style="text-align:center; padding: 15px; color: #777;">No se registraron cilindros vinculados a este lote.</td></tr>`;
-  } else {
-    cilindrosLote.forEach(item => {
-      const tr = document.createElement('tr');
-      const badgeClass = item.conforme ? 'badge-success' : 'badge-danger';
-      
-      tr.innerHTML = `
-        <td><strong>${item.cilindro}</strong></td>
-        <td>${item.fecha || '-'}</td>
-        <td>${item.responsable || '-'}</td>
-        <td>${item.conductividad}</td>
-        <td>${item.dureza}</td>
-        <td>${item.ph}</td>
-        <td>${item.cloro}</td>
-        <td>${item.olor}</td>
-        <td>${item.color}</td>
-        <td><span class="badge ${badgeClass}">${item.conforme ? 'SI' : 'NO'}</span></td>
-      `;
-      bodyModal.appendChild(tr);
+    fechasDisponibles.forEach(f => {
+      const opt = document.createElement('option');
+      opt.value = f;
+      opt.textContent = `Fecha: ${f}`;
+      selectFecha.appendChild(opt);
     });
   }
 
-  modal.style.display = 'flex';
+  document.getElementById('modal-seleccionar-cilindros').style.display = 'flex';
+  cargarCilindrosPorFechaSeleccionada();
+}
+
+function cerrarModalSeleccionCilindros() {
+  const modal = document.getElementById('modal-seleccionar-cilindros');
+  if (modal) modal.style.display = 'none';
+  cilindrosAcumuladosParaLote = [];
+}
+
+function cargarCilindrosPorFechaSeleccionada() {
+  const selectFecha = document.getElementById('select-fecha-disponible');
+  const tbody = document.getElementById('tabla-body-cilindros-disponibles');
+  if (!tbody) return;
+  
+  tbody.innerHTML = '';
+  const valorFecha = selectFecha ? selectFecha.value : 'TODAS';
+
+  // Filtrar cilindros en stock que no hayan sido agregados en la sesión actual
+  const cilindrosStock = registros.filter(r => {
+    const estaEnStock = !r.enviado;
+    const noEstaEnAcumulado = !cilindrosAcumuladosParaLote.includes(String(r.id));
+    
+    if (valorFecha === 'TODAS') {
+      return estaEnStock && noEstaEnAcumulado;
+    }
+    return estaEnStock && noEstaEnAcumulado && r.fecha === valorFecha;
+  });
+
+  if (cilindrosStock.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;">No hay cilindros en stock disponibles para la fecha seleccionada.</td></tr>`;
+    return;
+  }
+
+  cilindrosStock.forEach(c => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><input type="checkbox" class="chk-cilindro" value="${c.id}"></td>
+      <td><strong>${c.cilindro}</strong></td>
+      <td>${c.fecha}</td>
+      <td>${c.conductividad ?? '-'}</td>
+      <td>${c.ph ?? '-'}</td>
+      <td><span class="badge badge-success">En Stock</span></td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+// Guarda los cilindros seleccionados de la fecha elegida y permite seguir agregando más de otra fecha
+async function guardarCilindrosEnSolicitud() {
+  const checkboxes = document.querySelectorAll('.chk-cilindro:checked');
+  const seleccionados = Array.from(checkboxes).map(cb => cb.value);
+  
+  if (seleccionados.length === 0) {
+    alert("Por favor, seleccione al menos un cilindro antes de asignar.");
+    return;
+  }
+
+  if (!solicitudSeleccionadaModal) {
+    alert("Error: No hay una solicitud seleccionada.");
+    return;
+  }
+
+  const idLote = String(solicitudSeleccionadaModal).trim();
+
+  try {
+    // 1. Asignar lote_id y marcar como enviado en Supabase (Se removió la columna 'lote')
+    const { error: errorCilindros } = await supabaseClient
+      .from('registros_cilindros')
+      .update({ 
+        lote_id: idLote,
+        enviado: true 
+      })
+      .in('id', seleccionados);
+
+    if (errorCilindros) {
+      alert("Error al actualizar cilindros: " + errorCilindros.message);
+      return;
+    }
+
+    // 2. Cambiar estado de solicitud a 'En Proceso'
+    await supabaseClient
+      .from('solicitudes')
+      .update({ estado: 'En Proceso' })
+      .eq('id', idLote);
+
+    // Guardar en el acumulador local
+    cilindrosAcumuladosParaLote.push(...seleccionados);
+
+    alert(`✅ Se asignaron ${seleccionados.length} cilindros al lote ${idLote}.\n\nPuedes cambiar la fecha en el desplegable para agregar más cilindros.`);
+
+    // Refrescar datos globales y la vista del modal
+    await cargarRegistrosDesdeSupabase();
+    await cargarSolicitudesDesdeSupabase();
+    actualizarUI();
+    cargarCilindrosPorFechaSeleccionada();
+
+  } catch (err) {
+    console.error("Error al asignar cilindros:", err);
+    alert("Ocurrió un error inesperado al asignar.");
+  }
+}
+
+// Finaliza y cierra la solicitud una vez completada la cantidad requerida
+async function completarSolicitudConCilindros() {
+  if (!solicitudSeleccionadaModal) return;
+
+  const confirmacion = confirm(`¿Deseas dar por COMPLETADA la solicitud ${solicitudSeleccionadaModal}?`);
+  if (!confirmacion) return;
+
+  const nombreUsuario = currentUser ? currentUser.nombre : 'Operador';
+
+  try {
+    const { error } = await supabaseClient
+      .from('solicitudes')
+      .update({ 
+        estado: 'Completado', 
+        completado_por: nombreUsuario,
+        fecha_completado: new Date().toISOString().split('T')[0]
+      })
+      .eq('id', solicitudSeleccionadaModal);
+
+    if (!error) {
+      alert(`🎉 La solicitud ${solicitudSeleccionadaModal} se ha completado con éxito.`);
+      cerrarModalSeleccionCilindros();
+      await cargarSolicitudesDesdeSupabase();
+      await cargarRegistrosDesdeSupabase();
+      actualizarUI();
+    } else {
+      alert("Error al completar solicitud: " + error.message);
+    }
+  } catch (err) {
+    console.error("Error al completar solicitud:", err);
+  }
+}
+
+// ==========================================
+// 8. VER TABLA DE SOLICITUD COMPLETADA Y MODALES
+// ==========================================
+async function verTablaLoteCompletado(idLote) {
+  const modal = document.getElementById('modal-ver-lote');
+  const bodyModal = document.getElementById('tabla-body-modal-lote');
+  const titulo = document.getElementById('modal-lote-titulo');
+
+  const idNormalizado = String(idLote).trim();
+
+  if (titulo) titulo.textContent = `Cilindros de Solicitud: ${idNormalizado}`;
+  if (bodyModal) bodyModal.innerHTML = '<tr><td colspan="11" style="text-align:center;">Cargando datos desde la base de datos...</td></tr>';
+  if (modal) modal.style.display = 'flex';
+
+  const { data: cilindrosDB, error } = await supabaseClient
+    .from('registros_cilindros')
+    .select('*')
+    .eq('lote_id', idNormalizado);
+
+  if (!bodyModal) return;
+  bodyModal.innerHTML = '';
+
+  if (error) {
+    bodyModal.innerHTML = `<tr><td colspan="11" style="text-align:center; color:red;">Error de lectura: ${error.message}</td></tr>`;
+    return;
+  }
+
+  if (!cilindrosDB || cilindrosDB.length === 0) {
+    bodyModal.innerHTML = `<tr><td colspan="11" style="text-align:center;">No se encontraron registros asignados a la solicitud (${idNormalizado}).</td></tr>`;
+    return;
+  }
+
+  cilindrosDB.forEach(item => {
+    const tr = document.createElement('tr');
+    const estaEnviado = item.enviado === true || String(item.enviado) === 'true';
+    
+    if (estaEnviado) tr.style.backgroundColor = '#d1e7dd';
+
+    tr.innerHTML = `
+      <td><strong>${item.cilindro}</strong></td>
+      <td>${item.fecha_envasado || item.fecha || '-'}</td>
+      <td>${item.creado_por || '-'}</td>
+      <td>${item.conductividad ?? '-'}</td>
+      <td>${item.dureza ?? '-'}</td>
+      <td>${item.ph ?? '-'}</td>
+      <td>${item.cloro ?? '-'}</td>
+      <td>${item.olor || '-'}</td>
+      <td>${item.color || '-'}</td>
+      <td><span class="badge ${item.conforme ? 'badge-success' : 'badge-danger'}">${item.conforme ? 'SI' : 'NO'}</span></td>
+      <td><strong>${estaEnviado ? 'ENVIADO' : 'EN STOCK'}</strong></td>
+    `;
+    bodyModal.appendChild(tr);
+  });
 }
 
 function cerrarModalLote() {
   const modal = document.getElementById('modal-ver-lote');
-  if (modal) modal.style.display = 'none';
+  if (modal) {
+    modal.style.display = 'none';
+  }
 }
 
-// Búsqueda
-const searchInput = document.getElementById('searchInput');
-if (searchInput) {
-  searchInput.addEventListener('input', (e) => {
-    const term = e.target.value.toLowerCase();
-    const registrosLoteActivo = registros.filter(r => r.lote === (loteActivoId || 'SIN_LOTE'));
-    const filtrados = registrosLoteActivo.filter(r => r.cilindro.toLowerCase().includes(term));
-    renderTabla(filtrados);
-  });
+// ==========================================
+// 9. DIAGRAMAS Y ACTUALIZACIONES UI
+// ==========================================
+function actualizarUI() {
+  renderSolicitudes();
+  actualizarGraficos();
+  renderizarCalendario();
+  if (fechaSeleccionadaPanel) renderTablaDia();
 }
 
-// Exportación CSV
-const btnExport = document.getElementById('btnExport');
-if (btnExport) {
-  btnExport.addEventListener('click', () => {
-    if (registros.length === 0) return alert('No hay datos para exportar.');
-
-    let csvContent = "\uFEFF"; 
-    csvContent += "# Cilindro;Lote;Fecha Produccion;Responsable;Conductividad;Dureza Total;pH;Cloro Residual;Olor;Color;Conforme\n";
-
-    registros.forEach(r => {
-      const condFormatted = r.conductividad.toString().replace('.', ',');
-      const durezaFormatted = r.dureza.toString().replace('.', ',');
-      const phFormatted = r.ph.toString().replace('.', ',');
-      const cloroFormatted = r.cloro.toString().replace('.', ',');
-
-      csvContent += `"${r.cilindro}";"${r.lote}";"${r.fecha}";"${r.responsable || '-'}";${condFormatted};${durezaFormatted};${phFormatted};${cloroFormatted};"${r.olor}";"${r.color}";"${r.conforme ? 'SI' : 'NO'}"\n`;
+function inicializarGraficos() {
+  const canvas1 = document.getElementById('qualityChart');
+  if (canvas1) {
+    chartInstance = new Chart(canvas1.getContext('2d'), {
+      type: 'doughnut',
+      data: { labels: ['Conforme', 'No Conforme', 'Restantes'], datasets: [{ data: [0, 0, 100], backgroundColor: ['#15803d', '#dc2626', '#e5e7eb'] }] },
+      options: { responsive: true, maintainAspectRatio: false, cutout: '75%', plugins: { legend: { position: 'bottom' } } }
     });
+  }
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    
-    link.setAttribute("href", url);
-    link.setAttribute("download", `CPFO-16_AguaTratada_${Date.now()}.csv`);
-    document.body.appendChild(link);
-    
-    link.click();
-    document.body.removeChild(link);
-    setTimeout(() => URL.revokeObjectURL(url), 100);
-  });
-}
-
-// ==========================================
-// 7. LÓGICA DE BITÁCORA Y OBSERVACIONES
-// ==========================================
-function abrirBitacora() {
-  const modalBitacora = document.getElementById('modal-bitacora');
-  if (modalBitacora) {
-    modalBitacora.style.display = 'flex';
-    renderizarBitacora();
+  const canvas2 = document.getElementById('dailyChart');
+  if (canvas2) {
+    dailyChartInstance = new Chart(canvas2.getContext('2d'), {
+      type: 'doughnut',
+      data: { labels: ['Producidos Hoy', 'Meta Diaria'], datasets: [{ data: [0, 27], backgroundColor: ['#007bff', '#e5e7eb'] }] },
+      options: { responsive: true, maintainAspectRatio: false, cutout: '75%', plugins: { legend: { position: 'bottom' } } }
+    });
   }
 }
 
-function cerrarBitacora() {
-  const modalBitacora = document.getElementById('modal-bitacora');
-  if (modalBitacora) modalBitacora.style.display = 'none';
-}
+function actualizarGraficos() {
+  const datosLoteActivo = registros.filter(r => r.lote === (loteActivoId || 'STOCK_GENERAL'));
+  if (chartInstance) {
+    const conformes = datosLoteActivo.filter(r => r.conforme).length;
+    const noConformes = datosLoteActivo.filter(r => !r.conforme).length;
+    const restantes = Math.max(0, 27 - datosLoteActivo.length);
 
-async function agregarObservacionBitacora(e) {
-  e.preventDefault();
-  const textarea = document.getElementById('bitacora-texto');
-  const texto = textarea.value.trim();
+    chartInstance.data.datasets[0].data = [conformes, noConformes, restantes];
+    chartInstance.update();
 
-  if (!texto) return;
-
-  const { error } = await supabaseClient.from('bitacora').insert([
-    {
-      usuario: currentUser ? currentUser.nombre : 'Usuario Anónimo',
-      rol: currentUser ? currentUser.role : 'invitado',
-      texto: texto
-    }
-  ]);
-
-  if (!error) {
-    textarea.value = '';
-    await cargarBitacoraDesdeSupabase();
-  }
-}
-
-async function registrarEnBitacoraAutomático(mensaje) {
-  await supabaseClient.from('bitacora').insert([
-    {
-      usuario: currentUser ? currentUser.nombre : 'Sistema',
-      rol: currentUser ? currentUser.role : 'sistema',
-      texto: `📌 [SISTEMA]: ${mensaje}`
-    }
-  ]);
-}
-
-function renderizarBitacora() {
-  const contenedor = document.getElementById('lista-bitacora');
-  if (!contenedor) return;
-  
-  if (bitacoraRegistros.length === 0) {
-    contenedor.innerHTML = '<p style="text-align:center; color:#777;">No hay registros ni observaciones aún.</p>';
-    return;
+    const text = document.getElementById('chart-center-text');
+    if (text) text.textContent = `${Math.round((datosLoteActivo.length / 27) * 100)}%`;
   }
 
-  contenedor.innerHTML = bitacoraRegistros.map(reg => `
-    <div class="bitacora-item" style="border-bottom: 1px solid #ddd; padding: 8px 0;">
-      <div class="bitacora-header" style="display: flex; justify-content: space-between; font-size: 0.85rem; color: #555;">
-        <span>👤 <strong>${reg.usuario}</strong> (${reg.rol.toUpperCase()})</span>
-        <span>🕒 ${reg.fechaHora}</span>
-      </div>
-      <div class="bitacora-texto" style="margin-top: 4px;">${reg.texto}</div>
-    </div>
-  `).join('');
+  actualizarGraficoDiario();
+}
+
+function actualizarGraficoDiario() {
+  if (!dailyChartInstance) return;
+  const hoyStr = new Date().toISOString().split('T')[0];
+  const producidosHoy = registros.filter(r => r.fecha === hoyStr).length;
+
+  dailyChartInstance.data.datasets[0].data = [producidosHoy, Math.max(0, 27 - producidosHoy)];
+  dailyChartInstance.update();
+
+  const text = document.getElementById('daily-chart-center-text');
+  if (text) text.textContent = `${producidosHoy}`;
 }
