@@ -101,11 +101,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderizarCalendario();
   suscribirSupabaseRealtime();
 
-  const savedUser = localStorage.getItem('currentUser');
-  if (savedUser) {
-    currentUser = JSON.parse(savedUser);
-    iniciarSesionApp(true);
-  }
+  // CORREGIDO: Forzar limpieza inicial de sesión para que SIEMPRE pida login al abrir o recargar
+  localStorage.removeItem('currentUser');
+  currentUser = null;
+  
+  // Asegurar que se muestre el modal de login correctamente de entrada
+  const modalLogin = document.getElementById('login-modal');
+  const appContent = document.getElementById('app-content');
+  if (modalLogin) modalLogin.style.display = 'flex';
+  if (appContent) appContent.style.display = 'none';
+  volverARoles();
 });
 
 function registrarServiceWorkerYNotificaciones() {
@@ -216,7 +221,6 @@ function seleccionarRol(rol) {
   document.getElementById('form-login').style.display = 'flex';
   document.getElementById('login-error').style.display = 'none';
 
-  // Limpiar campo de contraseña al cambiar de pantalla
   const inputPass = document.getElementById('login-pass');
   if (inputPass) inputPass.value = '';
 
@@ -308,11 +312,10 @@ function mostrarErrorLogin() {
 }
 
 function iniciarSesionApp(desdeMemoria = false) {
-  if (!desdeMemoria) {
+  if (!desdeMemoria && currentUser) {
     localStorage.setItem('currentUser', JSON.stringify(currentUser));
   }
 
-  // Limpiar contraseña tras iniciar sesión
   const inputPass = document.getElementById('login-pass');
   if (inputPass) inputPass.value = '';
 
@@ -949,7 +952,6 @@ async function verTablaLoteCompletado(idLote) {
   });
 }
 
-// Acción de Calidad para aprobar y autorizar envío
 async function darConformidadCalidad() {
   if (!solicitudSeleccionadaModal) return;
   const horaEnvio = document.getElementById('hora-envio-calidad').value;
@@ -963,7 +965,6 @@ async function darConformidadCalidad() {
   if (!confirmacion) return;
 
   try {
-    // Intentar actualización completa
     let updatePayload = { 
       estado: 'Lote Verificado y Enviado',
       hora_envio: horaEnvio,
@@ -975,7 +976,6 @@ async function darConformidadCalidad() {
       .update(updatePayload)
       .eq('id', solicitudSeleccionadaModal);
 
-    // Fallback de seguridad por si no has ejecutado el SQL aún
     if (errSol && errSol.message.includes('column')) {
       const { error: errFallback } = await supabaseClient
         .from('solicitudes')
