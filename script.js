@@ -40,6 +40,7 @@ let horaInicioEnvasado = null;
 let solicitudSeleccionadaModal = null;
 
 let cilindrosAcumuladosParaLote = [];
+let loteActualDelDia = 1; // Control de lote secuencial diario
 
 const CREDENTIALLS = {
   operador: {
@@ -69,30 +70,48 @@ function obtenerDiaJuliano(fecha = new Date()) {
   return Math.floor(dif / unDia);
 }
 
-function cargarOpcionesCilindros() {
-  const selectCilindro = document.getElementById('numCilindro');
-  if (!selectCilindro) return;
+// Obtiene el número de lote secuencial basado en los registros existentes de la fecha seleccionada
+function calcularLoteActualParaFecha(fechaStr) {
+  if (!fechaStr) return "001";
+  const regsFecha = registros.filter(r => r.fecha === fechaStr || r.fecha_envasado === fechaStr);
+  if (regsFecha.length === 0) return "001";
 
-  const diaJuliano = obtenerDiaJuliano().toString().padStart(3, '0');
-  selectCilindro.innerHTML = '<option value="" disabled selected>-- Seleccione Cilindro --</option>';
+  // Extraer los lotes únicos registrados en el día
+  const lotesUnicos = [...new Set(regsFecha.map(r => {
+    const parts = String(r.lote_id || r.lote || "").split('-');
+    return parts.length >= 2 ? parts[1] : null;
+  }))].filter(Boolean);
 
-  for (let i = 1; i <= 27; i++) {
-    const num = i.toString().padStart(3, '0');
-    const codigo = `AO26.${diaJuliano}-${num}`;
-    const option = document.createElement('option');
-    option.value = codigo;
-    option.textContent = codigo;
-    selectCilindro.appendChild(option);
-  }
+  if (lotesUnicos.length === 0) return "001";
+  
+  // El lote actual será el último creado o el siguiente disponible
+  const ultimoLote = parseInt(lotesUnicos[lotesUnicos.length - 1], 10);
+  return (isNaN(ultimoLote) ? 1 : ultimoLote).toString().padStart(3, '0');
+}
+
+function actualizarCodigoCilindroAutomatico() {
+  const inputCilindro = document.getElementById('numCilindro');
+  if (!inputCilindro) return;
+
+  const fechaRef = fechaSeleccionadaPanel ? new Date(fechaSeleccionadaPanel + 'T00:00:00') : new Date();
+  const diaJuliano = obtenerDiaJuliano(fechaRef).toString().padStart(3, '0');
+  const numLoteStr = calcularLoteActualParaFecha(fechaSeleccionadaPanel);
+
+  // Contar cuántos cilindros ya se registraron en este lote específico para esta fecha
+  const loteIdCompleto = `LOTE_${fechaSeleccionadaPanel}_${numLoteStr}`;
+  const regsLoteActual = registros.filter(r => (r.fecha === fechaSeleccionadaPanel || r.fecha_envasado === fechaSeleccionadaPanel) && String(r.lote_id).includes(numLoteStr));
+  
+  const siguienteSeq = (regsLoteActual.length + 1).toString().padStart(3, '0');
+  const codigoGenerado = `AO26.${diaJuliano}-${numLoteStr}-${siguienteSeq}`;
+
+  inputCilindro.value = codigoGenerado;
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
   const picker = document.getElementById('cal-fecha-picker');
   if (picker) picker.valueAsDate = new Date();
 
-  cargarOpcionesCilindros();
   registrarServiceWorkerYNotificaciones();
-  
   inicializarGraficos();
   
   await cargarSolicitudesDesdeSupabase();
@@ -101,11 +120,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderizarCalendario();
   suscribirSupabaseRealtime();
 
-  // CORREGIDO: Forzar limpieza inicial de sesión para que SIEMPRE pida login al abrir o recargar
   localStorage.removeItem('currentUser');
   currentUser = null;
   
-  // Asegurar que se muestre el modal de login correctamente de entrada
   const modalLogin = document.getElementById('login-modal');
   const appContent = document.getElementById('app-content');
   if (modalLogin) modalLogin.style.display = 'flex';
@@ -192,8 +209,6 @@ async function cargarSolicitudesDesdeSupabase() {
 
   if (!error && data) {
     solicitudes = data;
-    const lotePendiente = solicitudes.find(s => s.estado === 'Pendiente' || s.estado === 'En Proceso' || s.estado === 'En Verificación');
-    loteActivoId = lotePendiente ? lotePendiente.id : null;
     renderSolicitudes();
   }
 }
@@ -553,6 +568,9 @@ function abrirPanelFecha(fechaStr) {
     actualizarEstadoBotonesEnvasado(false);
   }
 
+  // Actualizar el código automático del cilindro según el lote diario actual
+  actualizarCodigoCilindroAutomatico();
+
   renderTablaDia();
   window.scrollTo({ top: document.getElementById('panel-envasado-fecha').offsetTop - 20, behavior: 'smooth' });
 }
@@ -601,6 +619,9 @@ async function iniciarEnvasado() {
   estadoEnvasadoIniciado = true;
   actualizarEstadoBotonesEnvasado(true);
 
+  // Asegurar que al iniciar un nuevo turno/envasado en el mismo día, se incremente el lote si ya existían registros previos terminados
+  actualizarCodigoCilindroAutomatico();
+
   await enviarNotificacionPush("Inicio de Envasado", `Se inició el envasado para la fecha ${fechaSeleccionadaPanel} a las ${ahora}`);
 }
 
@@ -636,7 +657,8 @@ if (formAguaDia) {
       return;
     }
 
-    const cilindro = document.getElementById('numCilindro').value;
+    const inputCilindro = document.getElementById('numCilindro');
+    const cilindro = inputCilindro ? inputCilindro.value : '';
     const conductividad = parseFloat(document.getElementById('conductividad').value);
     const dureza = parseFloat(document.getElementById('dureza').value);
     const ph = parseFloat(document.getElementById('ph').value);
@@ -645,13 +667,15 @@ if (formAguaDia) {
     const color = document.getElementById('color').value;
 
     const conforme = (conductividad <= 70.0 && dureza <= 2.0 && ph >= 6.0 && ph <= 7.0 && cloro < 0.01 && olor === 'CC' && color === 'CC');
-    const idUnico = `${fechaSeleccionadaPanel}_${cilindro}`;
+    const idUnico = `${fechaSeleccionadaPanel}_${cilindro.replace(/\./g, '_')}`;
 
+    const numLoteStr = calcularLoteActualParaFecha(fechaSeleccionadaPanel);
+    const loteIdCompleto = `LOTE_${fechaSeleccionadaPanel}_${numLoteStr}`;
     const nombreUsuario = currentUser ? currentUser.nombre : 'Operador';
 
     const { error } = await supabaseClient.from('registros_cilindros').insert([{
       id: idUnico,
-      lote_id: loteActivoId || 'STOCK_GENERAL',
+      lote_id: loteIdCompleto,
       cilindro: cilindro,
       conductividad: conductividad,
       dureza: dureza,
@@ -668,13 +692,13 @@ if (formAguaDia) {
     }]);
 
     if (!error) {
-      document.getElementById('numCilindro').selectedIndex = 0;
       document.getElementById('conductividad').value = '';
       document.getElementById('dureza').value = '';
       document.getElementById('ph').value = '';
       document.getElementById('cloro').value = '';
       
       await cargarRegistrosDesdeSupabase();
+      actualizarCodigoCilindroAutomatico(); // Actualizar el siguiente correlativo automáticamente
       renderTablaDia();
       actualizarUI();
     } else {
@@ -725,6 +749,7 @@ async function eliminarRegistro(id) {
   if (confirm("¿Eliminar registro?")) {
     await supabaseClient.from('registros_cilindros').delete().eq('id', id);
     await cargarRegistrosDesdeSupabase();
+    actualizarCodigoCilindroAutomatico();
     renderTablaDia();
     actualizarUI();
   }
@@ -1025,7 +1050,10 @@ function actualizarUI() {
   renderSolicitudes();
   actualizarGraficos();
   renderizarCalendario();
-  if (fechaSeleccionadaPanel) renderTablaDia();
+  if (fechaSeleccionadaPanel) {
+    renderTablaDia();
+    actualizarCodigoCilindroAutomatico();
+  }
 }
 
 function inicializarGraficos() {
@@ -1061,7 +1089,9 @@ function inicializarGraficos() {
 }
 
 function actualizarGraficos() {
-  const datosLoteActivo = registros.filter(r => r.lote === (loteActivoId || 'STOCK_GENERAL'));
+  const numLoteStr = calcularLoteActualParaFecha(fechaSeleccionadaPanel);
+  const datosLoteActivo = registros.filter(r => String(r.lote_id || r.lote).includes(numLoteStr) && (r.fecha === fechaSeleccionadaPanel || !fechaSeleccionadaPanel));
+  
   if (chartInstance) {
     const conformes = datosLoteActivo.filter(r => r.conforme).length;
     const noConformes = datosLoteActivo.filter(r => !r.conforme).length;
