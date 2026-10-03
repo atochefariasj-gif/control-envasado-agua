@@ -4,7 +4,10 @@
 const SUPABASE_URL = 'https://mpomtdtmdsggybhnvdof.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_5Z828OdqG-DuZNcgYJq_lQ_eMp-zeBk';
 
-const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+// Se deshabilita la persistencia automática de sesión para requerir login
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: { persistSession: false }
+});
 
 const firebaseConfig = {
   apiKey: "AIzaSyBoAEj2D9wUNZrRFSmdxOM1scqm0urNfRo",
@@ -31,28 +34,25 @@ let selectedRoleTemp = '';
 
 let chartInstance = null;
 let dailyChartInstance = null;
-let verificationChartInstance = null;
 let loteActivoId = null;
 
 let fechaSeleccionadaPanel = null;
 let estadoEnvasadoIniciado = false;
+let estadoEnvasadoPausado = false;
 let horaInicioEnvasado = null;
 let solicitudSeleccionadaModal = null;
 
+// Variable para acumular cilindros seleccionados en la sesión del modal
 let cilindrosAcumuladosParaLote = [];
-let loteActualDelDia = 1; // Control de lote secuencial diario
 
+// Credenciales por Rol
 const CREDENTIALLS = {
   operador: {
     gustavo: { nombre: 'Gustavo Silva', pass: 'gustavo123' },
     paul: { nombre: 'Paul Hernandez', pass: 'paul123' }
   },
-  admin: { pass: 'admin123' },
-  jefe: {
-    karent: { nombre: 'Karent Namuche', pass: 'karent2026' }
-  },
   supervisor: {
-    selene: { nombre: 'Selene Cordova', pass: 'selene123' },
+    selene: { nombre: 'Selene Córdova', pass: 'selene123' },
     carlos: { nombre: 'Carlos Coronado', pass: 'carlos123' }
   },
   calidad: {
@@ -60,51 +60,44 @@ const CREDENTIALLS = {
     daniel: { nombre: 'Daniel', pass: 'contraseña123' },
     priscila: { nombre: 'Priscila', pass: 'pris123' },
     estefanny: { nombre: 'Estefanny Icanaque', pass: 'estefanny123' }
+  },
+  admin: { pass: 'admin123' },
+  jefe: {
+    karent: { nombre: 'Karent Namuche', pass: 'karent2026' }
   }
 };
 
-function obtenerDiaJuliano(fecha = new Date()) {
-  const inicioAño = new Date(fecha.getFullYear(), 0, 0);
-  const dif = fecha - inicioAño;
-  const unDia = 1000 * 60 * 60 * 24;
-  return Math.floor(dif / unDia);
+// Generador del código estándar de cilindros A026.[DíaJuliano]-[Lote]-[Cilindro]
+function obtenerSiguienteCodigoCilindro(fechaStr) {
+  const date = fechaStr ? new Date(fechaStr + 'T00:00:00') : new Date();
+  const start = new Date(date.getFullYear(), 0, 0);
+  const diff = date - start;
+  const oneDay = 1000 * 60 * 60 * 24;
+  const diaJuliano = Math.floor(diff / oneDay).toString().padStart(3, '0');
+
+  // LOTE SECUENCIAL CORREGIDO (001, 002, 003...):
+  const fechasProcesadas = [...new Set(registros.map(r => r.fecha))].sort();
+  let indiceLote = fechasProcesadas.indexOf(fechaStr || date.toISOString().split('T')[0]);
+
+  if (indiceLote === -1) {
+    indiceLote = fechasProcesadas.length;
+  }
+
+  const numLoteSecuencial = indiceLote + 1;
+  const numLote = numLoteSecuencial.toString().padStart(3, '0');
+
+  // Secuencial de cilindros producidos en el día
+  const registrosDelDia = registros.filter(r => r.fecha === (fechaStr || date.toISOString().split('T')[0]));
+  const numCilindro = (registrosDelDia.length + 1).toString().padStart(3, '0');
+
+  return `A026.${diaJuliano}-${numLote}-${numCilindro}`;
 }
 
-// Obtiene el número de lote secuencial basado en los registros existentes de la fecha seleccionada
-function calcularLoteActualParaFecha(fechaStr) {
-  if (!fechaStr) return "001";
-  const regsFecha = registros.filter(r => r.fecha === fechaStr || r.fecha_envasado === fechaStr);
-  if (regsFecha.length === 0) return "001";
-
-  // Extraer los lotes únicos registrados en el día
-  const lotesUnicos = [...new Set(regsFecha.map(r => {
-    const parts = String(r.lote_id || r.lote || "").split('-');
-    return parts.length >= 2 ? parts[1] : null;
-  }))].filter(Boolean);
-
-  if (lotesUnicos.length === 0) return "001";
-  
-  // El lote actual será el último creado o el siguiente disponible
-  const ultimoLote = parseInt(lotesUnicos[lotesUnicos.length - 1], 10);
-  return (isNaN(ultimoLote) ? 1 : ultimoLote).toString().padStart(3, '0');
-}
-
-function actualizarCodigoCilindroAutomatico() {
+function actualizarCodigoCilindroFormulario() {
   const inputCilindro = document.getElementById('numCilindro');
-  if (!inputCilindro) return;
-
-  const fechaRef = fechaSeleccionadaPanel ? new Date(fechaSeleccionadaPanel + 'T00:00:00') : new Date();
-  const diaJuliano = obtenerDiaJuliano(fechaRef).toString().padStart(3, '0');
-  const numLoteStr = calcularLoteActualParaFecha(fechaSeleccionadaPanel);
-
-  // Contar cuántos cilindros ya se registraron en este lote específico para esta fecha
-  const loteIdCompleto = `LOTE_${fechaSeleccionadaPanel}_${numLoteStr}`;
-  const regsLoteActual = registros.filter(r => (r.fecha === fechaSeleccionadaPanel || r.fecha_envasado === fechaSeleccionadaPanel) && String(r.lote_id).includes(numLoteStr));
-  
-  const siguienteSeq = (regsLoteActual.length + 1).toString().padStart(3, '0');
-  const codigoGenerado = `AO26.${diaJuliano}-${numLoteStr}-${siguienteSeq}`;
-
-  inputCilindro.value = codigoGenerado;
+  if (inputCilindro && fechaSeleccionadaPanel) {
+    inputCilindro.value = obtenerSiguienteCodigoCilindro(fechaSeleccionadaPanel);
+  }
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -120,14 +113,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderizarCalendario();
   suscribirSupabaseRealtime();
 
-  localStorage.removeItem('currentUser');
+  // NO AUTO-LOGIN: Se fuerza la pantalla de Login siempre que se carga la página
   currentUser = null;
-  
-  const modalLogin = document.getElementById('login-modal');
-  const appContent = document.getElementById('app-content');
-  if (modalLogin) modalLogin.style.display = 'flex';
-  if (appContent) appContent.style.display = 'none';
-  volverARoles();
+  localStorage.removeItem('currentUser');
 });
 
 function registrarServiceWorkerYNotificaciones() {
@@ -141,12 +129,11 @@ function registrarServiceWorkerYNotificaciones() {
 }
 
 async function solicitarPermisoNotificaciones(registration) {
-  if (!messaging) return;
   if (typeof Notification === 'undefined') return;
 
   try {
     const permission = await Notification.requestPermission();
-    if (permission === 'granted') {
+    if (permission === 'granted' && messaging) {
       const token = await messaging.getToken({ serviceWorkerRegistration: registration, vapidKey: VAPID_KEY });
       if (token) await guardarTokenEnSupabase(token);
     }
@@ -162,11 +149,39 @@ async function guardarTokenEnSupabase(tokenFCM) {
   }
 }
 
+async function enviarNotificacionPushEdge(titulo, cuerpo) {
+  try {
+    const respuesta = await fetch(`${SUPABASE_URL}/functions/v1/enviar-notificacion`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": SUPABASE_KEY,
+        "Authorization": `Bearer ${SUPABASE_KEY}`
+      },
+      body: JSON.stringify({
+        titulo: titulo,
+        mensaje: cuerpo,
+        evento: titulo,
+        record: { detalle: cuerpo }
+      })
+    });
+
+    if (!respuesta.ok) {
+      console.warn(`Edge function status: ${respuesta.status}`);
+    }
+  } catch (error) {
+    console.error("Error al invocarse la Edge Function de notificación:", error);
+  }
+}
+
 async function enviarNotificacionPush(titulo, cuerpo) {
-  console.log(`[Notificación simulada localmente]: ${titulo} - ${cuerpo}`);
+  console.log(`[Notificación Push]: ${titulo} - ${cuerpo}`);
+  
   if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
     new Notification(titulo, { body: cuerpo, icon: './icon-192.png' });
   }
+
+  await enviarNotificacionPushEdge(titulo, cuerpo);
 }
 
 // ==========================================
@@ -209,6 +224,8 @@ async function cargarSolicitudesDesdeSupabase() {
 
   if (!error && data) {
     solicitudes = data;
+    const lotePendiente = solicitudes.find(s => s.estado === 'Pendiente' || s.estado === 'En Proceso');
+    loteActivoId = lotePendiente ? lotePendiente.id : null;
     renderSolicitudes();
   }
 }
@@ -236,9 +253,6 @@ function seleccionarRol(rol) {
   document.getElementById('form-login').style.display = 'flex';
   document.getElementById('login-error').style.display = 'none';
 
-  const inputPass = document.getElementById('login-pass');
-  if (inputPass) inputPass.value = '';
-
   const groupUsuario = document.getElementById('group-usuario');
   const labelUsuario = document.getElementById('label-usuario');
   const selectUsuario = document.getElementById('login-user');
@@ -249,6 +263,16 @@ function seleccionarRol(rol) {
     labelUsuario.textContent = 'Operador de Turno';
     groupUsuario.style.display = 'flex';
     selectUsuario.innerHTML = `<option value="gustavo">Gustavo Silva</option><option value="paul">Paul Hernandez</option>`;
+  } else if (rol === 'supervisor') {
+    loginTitle.textContent = 'Acceso Supervisor';
+    labelUsuario.textContent = 'Supervisor';
+    groupUsuario.style.display = 'flex';
+    selectUsuario.innerHTML = `<option value="selene">Selene Córdova</option><option value="carlos">Carlos Coronado</option>`;
+  } else if (rol === 'calidad') {
+    loginTitle.textContent = 'Acceso Calidad';
+    labelUsuario.textContent = 'Personal de Calidad';
+    groupUsuario.style.display = 'flex';
+    selectUsuario.innerHTML = `<option value="david">David</option><option value="daniel">Daniel</option><option value="priscila">Priscila</option><option value="estefanny">Estefanny Icanaque</option>`;
   } else if (rol === 'admin') {
     loginTitle.textContent = 'Acceso Administrador';
     groupUsuario.style.display = 'none';
@@ -257,29 +281,12 @@ function seleccionarRol(rol) {
     labelUsuario.textContent = 'Jefe de Producción';
     groupUsuario.style.display = 'flex';
     selectUsuario.innerHTML = `<option value="karent">Karent Namuche</option>`;
-  } else if (rol === 'supervisor') {
-    loginTitle.textContent = 'Acceso Supervisor';
-    labelUsuario.textContent = 'Supervisor';
-    groupUsuario.style.display = 'flex';
-    selectUsuario.innerHTML = `<option value="selene">Selene Cordova</option><option value="carlos">Carlos Coronado</option>`;
-  } else if (rol === 'calidad') {
-    loginTitle.textContent = 'Acceso Control de Calidad';
-    labelUsuario.textContent = 'Personal de Calidad';
-    groupUsuario.style.display = 'flex';
-    selectUsuario.innerHTML = `
-      <option value="david">David</option>
-      <option value="daniel">Daniel</option>
-      <option value="priscila">Priscila</option>
-      <option value="estefanny">Estefanny Icanaque</option>
-    `;
   }
 }
 
 function volverARoles() {
   document.getElementById('role-selection').style.display = 'flex';
   document.getElementById('form-login').style.display = 'none';
-  const inputPass = document.getElementById('login-pass');
-  if (inputPass) inputPass.value = '';
 }
 
 function procesarLogin(e) {
@@ -291,33 +298,33 @@ function procesarLogin(e) {
     const opData = CREDENTIALLS.operador[userKey];
     if (pass === opData.pass) {
       currentUser = { role: 'operador', nombre: opData.nombre };
-      iniciarSesionApp(false);
-    } else mostrarErrorLogin();
-  } else if (selectedRoleTemp === 'admin') {
-    if (pass === CREDENTIALLS.admin.pass) {
-      currentUser = { role: 'admin', nombre: 'Administrador' };
-      iniciarSesionApp(false);
-    } else mostrarErrorLogin();
-  } else if (selectedRoleTemp === 'jefe') {
-    const userKey = document.getElementById('login-user').value;
-    const jefeData = CREDENTIALLS.jefe[userKey];
-    if (pass === jefeData.pass) {
-      currentUser = { role: 'jefe', nombre: jefeData.nombre };
-      iniciarSesionApp(false);
+      iniciarSesionApp();
     } else mostrarErrorLogin();
   } else if (selectedRoleTemp === 'supervisor') {
     const userKey = document.getElementById('login-user').value;
     const supData = CREDENTIALLS.supervisor[userKey];
     if (pass === supData.pass) {
       currentUser = { role: 'supervisor', nombre: supData.nombre };
-      iniciarSesionApp(false);
+      iniciarSesionApp();
     } else mostrarErrorLogin();
   } else if (selectedRoleTemp === 'calidad') {
     const userKey = document.getElementById('login-user').value;
     const calData = CREDENTIALLS.calidad[userKey];
     if (pass === calData.pass) {
       currentUser = { role: 'calidad', nombre: calData.nombre };
-      iniciarSesionApp(false);
+      iniciarSesionApp();
+    } else mostrarErrorLogin();
+  } else if (selectedRoleTemp === 'admin') {
+    if (pass === CREDENTIALLS.admin.pass) {
+      currentUser = { role: 'admin', nombre: 'Administrador' };
+      iniciarSesionApp();
+    } else mostrarErrorLogin();
+  } else if (selectedRoleTemp === 'jefe') {
+    const userKey = document.getElementById('login-user').value;
+    const jefeData = CREDENTIALLS.jefe[userKey];
+    if (pass === jefeData.pass) {
+      currentUser = { role: 'jefe', nombre: jefeData.nombre };
+      iniciarSesionApp();
     } else mostrarErrorLogin();
   }
 }
@@ -326,14 +333,7 @@ function mostrarErrorLogin() {
   document.getElementById('login-error').style.display = 'block';
 }
 
-function iniciarSesionApp(desdeMemoria = false) {
-  if (!desdeMemoria && currentUser) {
-    localStorage.setItem('currentUser', JSON.stringify(currentUser));
-  }
-
-  const inputPass = document.getElementById('login-pass');
-  if (inputPass) inputPass.value = '';
-
+function iniciarSesionApp() {
   document.getElementById('login-modal').style.display = 'none';
   document.getElementById('app-content').style.display = 'block';
   document.getElementById('user-display-tag').textContent = `${currentUser.nombre} (${currentUser.role.toUpperCase()})`;
@@ -350,49 +350,50 @@ function iniciarSesionApp(desdeMemoria = false) {
 function cerrarSesion() {
   currentUser = null;
   localStorage.removeItem('currentUser');
-  const inputPass = document.getElementById('login-pass');
-  if (inputPass) inputPass.value = '';
   document.getElementById('login-modal').style.display = 'flex';
   document.getElementById('app-content').style.display = 'none';
+  document.getElementById('login-pass').value = '';
   volverARoles();
 }
 
 function aplicarPermisosPorRol() {
+  // Visibilidad del formulario de solicitudes (Jefe)
   const formSolicitud = document.getElementById('form-solicitud');
-  if (currentUser && (currentUser.role === 'jefe' || currentUser.role === 'supervisor' || currentUser.role === 'calidad' || currentUser.role === 'admin')) {
+  if (currentUser && currentUser.role === 'jefe') {
     if (formSolicitud) formSolicitud.style.display = 'grid';
   } else {
     if (formSolicitud) formSolicitud.style.display = 'none';
   }
 
+  // Visibilidad del botón de Exportar a Excel (Solo Admin)
+  const btnExportar = document.getElementById('btn-exportar-excel');
+  if (btnExportar) {
+    if (currentUser && currentUser.role === 'admin') {
+      btnExportar.style.display = 'inline-block';
+    } else {
+      btnExportar.style.display = 'none';
+    }
+  }
+
+  // Visibilidad de controles del operador
   const btnIniciar = document.getElementById('btn-iniciar-envasado');
+  const btnPausar = document.getElementById('btn-pausar-envasado');
+  const btnReanudar = document.getElementById('btn-reanudar-envasado');
   const btnFinalizar = document.getElementById('btn-finalizar-envasado');
 
   if (currentUser && currentUser.role !== 'operador') {
     if (btnIniciar) btnIniciar.style.display = 'none';
+    if (btnPausar) btnPausar.style.display = 'none';
+    if (btnReanudar) btnReanudar.style.display = 'none';
     if (btnFinalizar) btnFinalizar.style.display = 'none';
   } else {
     if (btnIniciar) btnIniciar.style.display = 'inline-block';
     if (btnFinalizar) btnFinalizar.style.display = 'inline-block';
   }
-
-  const chartVerif = document.getElementById('card-chart-verificacion');
-  const chartLote = document.getElementById('card-chart-lote-activo');
-  const chartDiario = document.getElementById('card-chart-diario');
-
-  if (currentUser && currentUser.role === 'calidad') {
-    if (chartVerif) chartVerif.style.display = 'block';
-    if (chartLote) chartLote.style.display = 'none';
-    if (chartDiario) chartDiario.style.display = 'none';
-  } else {
-    if (chartVerif) chartVerif.style.display = 'none';
-    if (chartLote) chartLote.style.display = 'block';
-    if (chartDiario) chartDiario.style.display = 'block';
-  }
 }
 
 // ==========================================
-// 4. SOLICITUDES DE ENVÍO
+// 4. SOLICITUDES DE ENVÍO CON BÚSQUEDA Y ESTADOS
 // ==========================================
 function renderSolicitudes() {
   const container = document.getElementById('lista-solicitudes');
@@ -402,7 +403,7 @@ function renderSolicitudes() {
   container.innerHTML = '';
 
   const solicitudesFiltradas = solicitudes.filter(sol => 
-    String(sol.id).toLowerCase().includes(filtro) || (sol.fecha_completado && sol.fecha_completado.includes(filtro))
+    sol.id.toLowerCase().includes(filtro) || (sol.fecha_completado && sol.fecha_completado.includes(filtro))
   );
 
   if (solicitudesFiltradas.length === 0) {
@@ -411,10 +412,11 @@ function renderSolicitudes() {
   }
 
   solicitudesFiltradas.forEach(sol => {
-    const enVerificacion = sol.estado === 'En Verificación';
-    const verificadoYEnviado = sol.estado === 'Lote Verificado y Enviado' || sol.estado === 'Completado';
-    const enProceso = sol.estado === 'En Proceso';
-    
+    const estado = sol.estado;
+    const esVerificadoYEnviado = estado === 'Verificado y Enviado' || estado === 'Completado';
+    const esEnVerificacion = estado === 'En Verificación';
+    const esEnProceso = estado === 'En Proceso';
+
     const div = document.createElement('div');
     div.className = 'solicitud-card';
     div.style.border = "1px solid #ddd";
@@ -422,34 +424,34 @@ function renderSolicitudes() {
     div.style.marginBottom = "8px";
     div.style.borderRadius = "6px";
 
-    if (enVerificacion) {
-      div.style.backgroundColor = '#fff3cd';
-    } else if (verificadoYEnviado) {
-      div.style.backgroundColor = '#d1e7dd';
+    if (esVerificadoYEnviado) {
+      div.style.backgroundColor = "#d1e7dd";
+      div.style.borderColor = "#0f5132";
+    } else if (esEnVerificacion) {
+      div.style.backgroundColor = "#fff3cd";
+      div.style.borderColor = "#ffc107";
     }
 
     let estadoBadge = '<span style="color: orange; font-weight: bold;">Pendiente</span>';
-    if (enVerificacion) {
-      estadoBadge = '<span style="color: #856404; font-weight: bold;">⚠️ En Verificación</span>';
-    } else if (verificadoYEnviado) {
-      estadoBadge = '<span style="color: green; font-weight: bold;">✓ Lote Verificado y Enviado</span>';
-    } else if (enProceso) {
+    if (esVerificadoYEnviado) {
+      estadoBadge = '<span style="color: #0f5132; font-weight: bold;">✓ Verificado y Enviado</span>';
+    } else if (esEnVerificacion) {
+      estadoBadge = '<span style="color: #856404; font-weight: bold;">⏳ En Verificación (Calidad)</span>';
+    } else if (esEnProceso) {
       estadoBadge = '<span style="color: #0d6efd; font-weight: bold;">🔄 En Proceso</span>';
     }
 
     let htmlContent = `
       <div class="solicitud-info">
-        <h4><i class="fa-solid fa-truck"></i> Solicitud de Envío #${sol.id}</h4>
-        <p>Detalle: <strong>${sol.producto}</strong> | Fecha: <strong>${sol.fecha_completado || '-'}</strong> ${sol.hora_envio ? '| Hora Envío: <strong>' + sol.hora_envio + '</strong>' : ''}</p>
+        <h4><i class="fa-solid fa-box"></i> Solicitud de Envío: ${sol.producto || 'Cilindros de Agua'}</h4>
+        <p>ID Lote: <strong>${sol.id}</strong> | Fecha Req: <strong>${sol.fecha_completado || '-'}</strong> | Hora Envío: <strong>${sol.hora_envio || 'Pendiente'}</strong></p>
         <p>Estado: ${estadoBadge}</p>
       </div>
       <div class="solicitud-acciones" style="margin-top: 8px; display: flex; gap: 8px;">
     `;
 
-    if (verificadoYEnviado) {
-      htmlContent += `<button class="btn btn-secondary" onclick="verTablaLoteCompletado('${sol.id}')">📊 Ver Tabla</button>`;
-    } else if (enVerificacion) {
-      htmlContent += `<button class="btn btn-warning" onclick="verTablaLoteCompletado('${sol.id}')">🔍 Verificar Lote</button>`;
+    if (esVerificadoYEnviado || esEnVerificacion || currentUser?.role === 'calidad' || currentUser?.role === 'jefe' || currentUser?.role === 'supervisor') {
+      htmlContent += `<button class="btn btn-secondary" onclick="verTablaLoteCompletado('${sol.id}')">📊 Ver Tabla / Detalle</button>`;
     } else if (currentUser && currentUser.role === 'operador') {
       htmlContent += `<button class="btn btn-primary" onclick="abrirModalSeleccionarCilindros('${sol.id}')">📦 Asignar Cilindros Disponibles</button>`;
     }
@@ -466,15 +468,16 @@ function filtrarSolicitudes() {
 
 async function crearSolicitudLote(e) {
   e.preventDefault();
-  const detalle = document.getElementById('sol-cilindros').value;
+  const numCilindrosSol = document.getElementById('sol-cilindros').value;
   const fechaEntrega = document.getElementById('sol-fecha').value;
 
-  const idSol = (solicitudes.length + 1).toString();
+  const numSolicitudSecuencial = (solicitudes.length + 1).toString();
+  const idSol = numSolicitudSecuencial;
 
   const { error } = await supabaseClient.from('solicitudes').insert([
     {
       id: idSol,
-      producto: detalle,
+      producto: `${numCilindrosSol} Cilindros Solicitados`,
       estado: 'Pendiente',
       creado_por: currentUser ? currentUser.nombre : 'Sistema',
       fecha_completado: fechaEntrega
@@ -484,9 +487,11 @@ async function crearSolicitudLote(e) {
   if (!error) {
     document.getElementById('sol-cilindros').value = '';
     document.getElementById('sol-fecha').value = '';
-    await enviarNotificacionPush("Nueva Solicitud de Envío", `Solicitud #${idSol} creada para el ${fechaEntrega}`);
+    await enviarNotificacionPush("Nueva Solicitud de Envío", `Solicitud #${idSol} creada para ${fechaEntrega}`);
     await cargarSolicitudesDesdeSupabase();
     actualizarUI();
+  } else {
+    alert("Error al crear la solicitud de envío: " + error.message);
   }
 }
 
@@ -568,9 +573,7 @@ function abrirPanelFecha(fechaStr) {
     actualizarEstadoBotonesEnvasado(false);
   }
 
-  // Actualizar el código automático del cilindro según el lote diario actual
-  actualizarCodigoCilindroAutomatico();
-
+  actualizarCodigoCilindroFormulario();
   renderTablaDia();
   window.scrollTo({ top: document.getElementById('panel-envasado-fecha').offsetTop - 20, behavior: 'smooth' });
 }
@@ -581,30 +584,47 @@ function cerrarPanelFecha() {
 
 function actualizarEstadoBotonesEnvasado(iniciado) {
   const btnIni = document.getElementById('btn-iniciar-envasado');
+  const btnPausar = document.getElementById('btn-pausar-envasado');
+  const btnReanudar = document.getElementById('btn-reanudar-envasado');
   const btnFin = document.getElementById('btn-finalizar-envasado');
   const label = document.getElementById('label-estado-envasado');
   const formDia = document.getElementById('sec-formulario-dia');
 
   if (currentUser && currentUser.role !== 'operador') {
     if (btnIni) btnIni.style.display = 'none';
+    if (btnPausar) btnPausar.style.display = 'none';
+    if (btnReanudar) btnReanudar.style.display = 'none';
     if (btnFin) btnFin.style.display = 'none';
     if (formDia) formDia.style.display = 'none';
     return;
   }
 
-  if (iniciado) {
-    if (btnIni) btnIni.disabled = true;
-    if (btnFin) btnFin.disabled = false;
+  if (iniciado && !estadoEnvasadoPausado) {
+    if (btnIni) btnIni.style.display = 'none';
+    if (btnPausar) btnPausar.style.display = 'inline-block';
+    if (btnReanudar) btnReanudar.style.display = 'none';
+    if (btnFin) { btnFin.style.display = 'inline-block'; btnFin.disabled = false; }
     if (label) {
       label.textContent = "Envasado En Curso";
       label.style.background = "#28a745";
     }
-    if (currentUser && currentUser.role === 'operador' && formDia) {
-      formDia.style.display = 'block';
+    if (formDia) formDia.style.display = 'block';
+  } else if (estadoEnvasadoPausado) {
+    if (btnIni) btnIni.style.display = 'none';
+    if (btnPausar) btnPausar.style.display = 'none';
+    if (btnReanudar) btnReanudar.style.display = 'inline-block';
+    if (btnFin) { btnFin.style.display = 'inline-block'; btnFin.disabled = false; }
+    if (label) {
+      label.textContent = "Envasado Pausado";
+      label.style.background = "#ffc107";
+      label.style.color = "#000";
     }
+    if (formDia) formDia.style.display = 'none';
   } else {
-    if (btnIni) btnIni.disabled = false;
-    if (btnFin) btnFin.disabled = true;
+    if (btnIni) { btnIni.style.display = 'inline-block'; btnIni.disabled = false; }
+    if (btnPausar) btnPausar.style.display = 'none';
+    if (btnReanudar) btnReanudar.style.display = 'none';
+    if (btnFin) { btnFin.style.display = 'inline-block'; btnFin.disabled = true; }
     if (label) {
       label.textContent = "Envasado No Iniciado";
       label.style.background = "#6c757d";
@@ -617,12 +637,32 @@ async function iniciarEnvasado() {
   const ahora = new Date().toTimeString().split(' ')[0];
   horaInicioEnvasado = ahora;
   estadoEnvasadoIniciado = true;
+  estadoEnvasadoPausado = false;
+  actualizarEstadoBotonesEnvasado(true);
+  actualizarCodigoCilindroFormulario();
+
+  await enviarNotificacionPush("Inicio de Envasado", `${currentUser.nombre} inició el envasado para la fecha ${fechaSeleccionadaPanel} a las ${ahora}`);
+}
+
+async function pausarEnvasado() {
+  const ahora = new Date().toTimeString().split(' ')[0];
+  estadoEnvasadoPausado = true;
   actualizarEstadoBotonesEnvasado(true);
 
-  // Asegurar que al iniciar un nuevo turno/envasado en el mismo día, se incremente el lote si ya existían registros previos terminados
-  actualizarCodigoCilindroAutomatico();
+  await enviarNotificacionPush("Envasado Pausado", `${currentUser.nombre} pausó el envasado para la fecha ${fechaSeleccionadaPanel} a las ${ahora}`);
+}
 
-  await enviarNotificacionPush("Inicio de Envasado", `Se inició el envasado para la fecha ${fechaSeleccionadaPanel} a las ${ahora}`);
+async function reanudarEnvasado() {
+  const ahora = new Date().toTimeString().split(' ')[0];
+  estadoEnvasadoPausado = false;
+  
+  const elemResp = document.getElementById('responsable');
+  if (elemResp) elemResp.value = currentUser.nombre;
+
+  actualizarEstadoBotonesEnvasado(true);
+  actualizarCodigoCilindroFormulario();
+
+  await enviarNotificacionPush("Envasado Reanudado", `${currentUser.nombre} reanudó el envasado para la fecha ${fechaSeleccionadaPanel} a las ${ahora}`);
 }
 
 async function finalizarEnvasado() {
@@ -639,6 +679,7 @@ async function finalizarEnvasado() {
   }
 
   estadoEnvasadoIniciado = false;
+  estadoEnvasadoPausado = false;
   actualizarEstadoBotonesEnvasado(false);
 
   await enviarNotificacionPush("Finalización de Envasado", `Se finalizó el envasado para la fecha ${fechaSeleccionadaPanel} a las ${ahora}`);
@@ -652,13 +693,12 @@ const formAguaDia = document.getElementById('form-agua-dia');
 if (formAguaDia) {
   formAguaDia.addEventListener('submit', async (e) => {
     e.preventDefault();
-    if (!estadoEnvasadoIniciado) {
-      alert("Debe pulsar 'Iniciar Envasado' para poder registrar cilindros.");
+    if (!estadoEnvasadoIniciado || estadoEnvasadoPausado) {
+      alert("Debe iniciar o reanudar el envasado para registrar cilindros.");
       return;
     }
 
-    const inputCilindro = document.getElementById('numCilindro');
-    const cilindro = inputCilindro ? inputCilindro.value : '';
+    const cilindro = document.getElementById('numCilindro').value;
     const conductividad = parseFloat(document.getElementById('conductividad').value);
     const dureza = parseFloat(document.getElementById('dureza').value);
     const ph = parseFloat(document.getElementById('ph').value);
@@ -667,15 +707,13 @@ if (formAguaDia) {
     const color = document.getElementById('color').value;
 
     const conforme = (conductividad <= 70.0 && dureza <= 2.0 && ph >= 6.0 && ph <= 7.0 && cloro < 0.01 && olor === 'CC' && color === 'CC');
-    const idUnico = `${fechaSeleccionadaPanel}_${cilindro.replace(/\./g, '_')}`;
+    const idUnico = `${fechaSeleccionadaPanel}_${cilindro}`;
 
-    const numLoteStr = calcularLoteActualParaFecha(fechaSeleccionadaPanel);
-    const loteIdCompleto = `LOTE_${fechaSeleccionadaPanel}_${numLoteStr}`;
     const nombreUsuario = currentUser ? currentUser.nombre : 'Operador';
 
     const { error } = await supabaseClient.from('registros_cilindros').insert([{
       id: idUnico,
-      lote_id: loteIdCompleto,
+      lote_id: loteActivoId || 'STOCK_GENERAL',
       cilindro: cilindro,
       conductividad: conductividad,
       dureza: dureza,
@@ -698,7 +736,7 @@ if (formAguaDia) {
       document.getElementById('cloro').value = '';
       
       await cargarRegistrosDesdeSupabase();
-      actualizarCodigoCilindroAutomatico(); // Actualizar el siguiente correlativo automáticamente
+      actualizarCodigoCilindroFormulario();
       renderTablaDia();
       actualizarUI();
     } else {
@@ -749,7 +787,6 @@ async function eliminarRegistro(id) {
   if (confirm("¿Eliminar registro?")) {
     await supabaseClient.from('registros_cilindros').delete().eq('id', id);
     await cargarRegistrosDesdeSupabase();
-    actualizarCodigoCilindroAutomatico();
     renderTablaDia();
     actualizarUI();
   }
@@ -863,7 +900,7 @@ async function guardarCilindrosEnSolicitud() {
 
     cilindrosAcumuladosParaLote.push(...seleccionados);
 
-    alert(`✅ Se asignaron ${seleccionados.length} cilindros a la solicitud #${idLote}.\n\nPuedes cambiar la fecha en el desplegable para agregar más cilindros.`);
+    alert(`✅ Se asignaron ${seleccionados.length} cilindros a la Solicitud #${idLote}.`);
 
     await cargarRegistrosDesdeSupabase();
     await cargarSolicitudesDesdeSupabase();
@@ -879,7 +916,7 @@ async function guardarCilindrosEnSolicitud() {
 async function completarSolicitudConCilindros() {
   if (!solicitudSeleccionadaModal) return;
 
-  const confirmacion = confirm(`¿Deseas dar por completada la carga de la solicitud #${solicitudSeleccionadaModal} y enviarla a VERIFICACIÓN por Calidad?`);
+  const confirmacion = confirm(`¿Deseas enviar la Solicitud de Envío #${solicitudSeleccionadaModal} a VERIFICACIÓN por Calidad?`);
   if (!confirmacion) return;
 
   const nombreUsuario = currentUser ? currentUser.nombre : 'Operador';
@@ -889,14 +926,13 @@ async function completarSolicitudConCilindros() {
       .from('solicitudes')
       .update({ 
         estado: 'En Verificación', 
-        completado_por: nombreUsuario,
-        fecha_completado: new Date().toISOString().split('T')[0]
+        completado_por: nombreUsuario
       })
       .eq('id', solicitudSeleccionadaModal);
 
     if (!error) {
-      alert(`🎉 La solicitud #${solicitudSeleccionadaModal} ha pasado a estado "En Verificación".`);
-      await enviarNotificacionPush("Lote en Verificación", `La solicitud de envío #${solicitudSeleccionadaModal} requiere revisión de Calidad.`);
+      await enviarNotificacionPush("Lote Listo para Verificación", `La solicitud #${solicitudSeleccionadaModal} pasó a estado En Verificación por el operador ${nombreUsuario}`);
+      alert(`⏳ Solicitud #${solicitudSeleccionadaModal} enviada a Verificación por Calidad.`);
       cerrarModalSeleccionCilindros();
       await cargarSolicitudesDesdeSupabase();
       await cargarRegistrosDesdeSupabase();
@@ -910,28 +946,23 @@ async function completarSolicitudConCilindros() {
 }
 
 // ==========================================
-// 8. VER TABLA Y LIBERACIÓN DE CALIDAD
+// 8. VER TABLA Y LIBERACIÓN CONFORMIDAD CALIDAD
 // ==========================================
 async function verTablaLoteCompletado(idLote) {
   solicitudSeleccionadaModal = String(idLote).trim();
-
   const modal = document.getElementById('modal-ver-lote');
   const bodyModal = document.getElementById('tabla-body-modal-lote');
   const titulo = document.getElementById('modal-lote-titulo');
-  const secCalidad = document.getElementById('seccion-conformidad-calidad');
+  const panelCalidad = document.getElementById('panel-verificacion-calidad');
 
   if (titulo) titulo.textContent = `Cilindros de la Solicitud #${solicitudSeleccionadaModal}`;
   if (bodyModal) bodyModal.innerHTML = '<tr><td colspan="11" style="text-align:center;">Cargando datos desde la base de datos...</td></tr>';
   
   const solActual = solicitudes.find(s => String(s.id).trim() === solicitudSeleccionadaModal);
   if (currentUser && currentUser.role === 'calidad' && solActual && solActual.estado === 'En Verificación') {
-    if (secCalidad) {
-      secCalidad.style.display = 'block';
-      const inputHora = document.getElementById('hora-envio-calidad');
-      if (inputHora) inputHora.value = new Date().toTimeString().split(' ')[0].substring(0, 5);
-    }
+    if (panelCalidad) panelCalidad.style.display = 'block';
   } else {
-    if (secCalidad) secCalidad.style.display = 'none';
+    if (panelCalidad) panelCalidad.style.display = 'none';
   }
 
   if (modal) modal.style.display = 'flex';
@@ -950,7 +981,7 @@ async function verTablaLoteCompletado(idLote) {
   }
 
   if (!cilindrosDB || cilindrosDB.length === 0) {
-    bodyModal.innerHTML = `<tr><td colspan="11" style="text-align:center;">No se encontraron registros asignados a la solicitud #${solicitudSeleccionadaModal}.</td></tr>`;
+    bodyModal.innerHTML = `<tr><td colspan="11" style="text-align:center;">No se encontraron registros asignados a la solicitud (#${solicitudSeleccionadaModal}).</td></tr>`;
     return;
   }
 
@@ -978,55 +1009,46 @@ async function verTablaLoteCompletado(idLote) {
 }
 
 async function darConformidadCalidad() {
-  if (!solicitudSeleccionadaModal) return;
-  const horaEnvio = document.getElementById('hora-envio-calidad').value;
+  const horaEnvio = document.getElementById('hora-envio-calidad')?.value;
 
   if (!horaEnvio) {
-    alert("Por favor ingrese la hora de envío antes de dar conformidad.");
+    alert("Por favor ingrese la Hora de Envío antes de dar la conformidad.");
     return;
   }
 
-  const confirmacion = confirm(`¿Desea dar conformidad y autorizar el ENVÍO de la solicitud #${solicitudSeleccionadaModal} a las ${horaEnvio}?`);
+  if (!solicitudSeleccionadaModal) return;
+
+  const confirmacion = confirm(`¿Dar Conformidad y Liberar para Envío la Solicitud #${solicitudSeleccionadaModal}?`);
   if (!confirmacion) return;
 
   try {
-    let updatePayload = { 
-      estado: 'Lote Verificado y Enviado',
-      hora_envio: horaEnvio,
-      verificado_por: currentUser ? currentUser.nombre : 'Calidad'
-    };
-
-    let { error: errSol } = await supabaseClient
+    const { error: errorSol } = await supabaseClient
       .from('solicitudes')
-      .update(updatePayload)
+      .update({
+        estado: 'Verificado y Enviado',
+        verificado_por: currentUser ? currentUser.nombre : 'Calidad',
+        hora_envio: horaEnvio,
+        fecha_completado: new Date().toISOString().split('T')[0]
+      })
       .eq('id', solicitudSeleccionadaModal);
 
-    if (errSol && errSol.message.includes('column')) {
-      const { error: errFallback } = await supabaseClient
-        .from('solicitudes')
-        .update({ estado: 'Lote Verificado y Enviado' })
-        .eq('id', solicitudSeleccionadaModal);
-      
-      errSol = errFallback;
-    }
-
-    if (errSol) {
-      alert("Error al actualizar la solicitud: " + errSol.message);
+    if (errorSol) {
+      alert("Error actualizando solicitud: " + errorSol.message);
       return;
     }
 
-    const { error: errCil } = await supabaseClient
+    const { error: errorCil } = await supabaseClient
       .from('registros_cilindros')
       .update({ enviado: true })
       .eq('lote_id', solicitudSeleccionadaModal);
 
-    if (errCil) {
-      alert("Error al actualizar estado de cilindros: " + errCil.message);
+    if (errorCil) {
+      alert("Error actualizando cilindros enviando: " + errorCil.message);
       return;
     }
 
-    alert(`✅ Solicitud de Envío #${solicitudSeleccionadaModal} verificada y despachada con éxito.`);
-    await enviarNotificacionPush("Envío Conformado", `La solicitud #${solicitudSeleccionadaModal} fue verificada por Calidad y despachada a las ${horaEnvio}.`);
+    await enviarNotificacionPush("Conformidad Otorgada", `La solicitud #${solicitudSeleccionadaModal} fue verificada y liberada a las ${horaEnvio} por ${currentUser.nombre}`);
+    alert(`✅ Lote #${solicitudSeleccionadaModal} verificado y liberado exitosamente.`);
 
     cerrarModalLote();
     await cargarSolicitudesDesdeSupabase();
@@ -1034,13 +1056,15 @@ async function darConformidadCalidad() {
     actualizarUI();
 
   } catch (err) {
-    console.error("Error al verificar lote:", err);
+    console.error("Error en darConformidadCalidad:", err);
   }
 }
 
 function cerrarModalLote() {
   const modal = document.getElementById('modal-ver-lote');
-  if (modal) modal.style.display = 'none';
+  if (modal) {
+    modal.style.display = 'none';
+  }
 }
 
 // ==========================================
@@ -1050,10 +1074,7 @@ function actualizarUI() {
   renderSolicitudes();
   actualizarGraficos();
   renderizarCalendario();
-  if (fechaSeleccionadaPanel) {
-    renderTablaDia();
-    actualizarCodigoCilindroAutomatico();
-  }
+  if (fechaSeleccionadaPanel) renderTablaDia();
 }
 
 function inicializarGraficos() {
@@ -1074,53 +1095,51 @@ function inicializarGraficos() {
       options: { responsive: true, maintainAspectRatio: false, cutout: '75%', plugins: { legend: { position: 'bottom' } } }
     });
   }
-
-  const canvas3 = document.getElementById('verificationChart');
-  if (canvas3) {
-    verificationChartInstance = new Chart(canvas3.getContext('2d'), {
-      type: 'doughnut',
-      data: { 
-        labels: ['Verificados y Enviados', 'En Verificación', 'Pendientes/En Proceso'], 
-        datasets: [{ data: [0, 0, 100], backgroundColor: ['#28a745', '#ffc107', '#e5e7eb'] }] 
-      },
-      options: { responsive: true, maintainAspectRatio: false, cutout: '75%', plugins: { legend: { position: 'bottom' } } }
-    });
-  }
 }
 
 function actualizarGraficos() {
-  const numLoteStr = calcularLoteActualParaFecha(fechaSeleccionadaPanel);
-  const datosLoteActivo = registros.filter(r => String(r.lote_id || r.lote).includes(numLoteStr) && (r.fecha === fechaSeleccionadaPanel || !fechaSeleccionadaPanel));
-  
-  if (chartInstance) {
-    const conformes = datosLoteActivo.filter(r => r.conforme).length;
-    const noConformes = datosLoteActivo.filter(r => !r.conforme).length;
-    const restantes = Math.max(0, 27 - datosLoteActivo.length);
+  if (currentUser && currentUser.role === 'calidad') {
+    const title1 = document.getElementById('title-chart-1');
+    if (title1) title1.innerHTML = `<i class="fa-solid fa-list-check"></i> Avance de Verificación de Lotes`;
 
-    chartInstance.data.datasets[0].data = [conformes, noConformes, restantes];
-    chartInstance.update();
+    const totalLotes = solicitudes.length;
+    const lotesVerificados = solicitudes.filter(s => s.estado === 'Verificado y Enviado' || s.estado === 'Completado').length;
+    const lotesEnVerificacion = solicitudes.filter(s => s.estado === 'En Verificación').length;
+    const lotesPendientes = totalLotes - (lotesVerificados + lotesEnVerificacion);
 
-    const text = document.getElementById('chart-center-text');
-    if (text) text.textContent = `${Math.round((datosLoteActivo.length / 27) * 100)}%`;
+    if (chartInstance) {
+      chartInstance.data.labels = ['Verificados', 'En Verificación', 'Pendientes'];
+      chartInstance.data.datasets[0].data = [lotesVerificados, lotesEnVerificacion, Math.max(0, lotesPendientes)];
+      chartInstance.data.datasets[0].backgroundColor = ['#15803d', '#ffc107', '#e5e7eb'];
+      chartInstance.update();
+
+      const text = document.getElementById('chart-center-text');
+      if (text) {
+        const pct = totalLotes > 0 ? Math.round((lotesVerificados / totalLotes) * 100) : 0;
+        text.textContent = `${pct}%`;
+      }
+    }
+  } else {
+    const title1 = document.getElementById('title-chart-1');
+    if (title1) title1.innerHTML = `<i class="fa-solid fa-chart-pie"></i> Avance del Lote Activo`;
+
+    const datosLoteActivo = registros.filter(r => r.lote === (loteActivoId || 'STOCK_GENERAL'));
+    if (chartInstance) {
+      const conformes = datosLoteActivo.filter(r => r.conforme).length;
+      const noConformes = datosLoteActivo.filter(r => !r.conforme).length;
+      const restantes = Math.max(0, 27 - datosLoteActivo.length);
+
+      chartInstance.data.labels = ['Conforme', 'No Conforme', 'Restantes'];
+      chartInstance.data.datasets[0].data = [conformes, noConformes, restantes];
+      chartInstance.data.datasets[0].backgroundColor = ['#15803d', '#dc2626', '#e5e7eb'];
+      chartInstance.update();
+
+      const text = document.getElementById('chart-center-text');
+      if (text) text.textContent = `${Math.round((datosLoteActivo.length / 27) * 100)}%`;
+    }
   }
 
   actualizarGraficoDiario();
-
-  if (verificationChartInstance) {
-    const totalSols = solicitudes.length;
-    if (totalSols > 0) {
-      const verificados = solicitudes.filter(s => s.estado === 'Lote Verificado y Enviado' || s.estado === 'Completado').length;
-      const enVerif = solicitudes.filter(s => s.estado === 'En Verificación').length;
-      const rest = Math.max(0, totalSols - (verificados + enVerif));
-
-      verificationChartInstance.data.datasets[0].data = [verificados, enVerif, rest];
-      verificationChartInstance.update();
-
-      const pct = Math.round((verificados / totalSols) * 100);
-      const txt = document.getElementById('verif-chart-center-text');
-      if (txt) txt.textContent = `${pct}%`;
-    }
-  }
 }
 
 function actualizarGraficoDiario() {
@@ -1133,4 +1152,46 @@ function actualizarGraficoDiario() {
 
   const text = document.getElementById('daily-chart-center-text');
   if (text) text.textContent = `${producidosHoy}`;
+}
+
+// ==========================================
+// 10. EXPORTACIÓN DE DATOS A EXCEL (ADMIN)
+// ==========================================
+function exportarAExcel() {
+  if (!currentUser || currentUser.role !== 'admin') {
+    alert("Solo el Administrador tiene permisos para exportar datos.");
+    return;
+  }
+
+  if (registros.length === 0) {
+    alert("No hay registros disponibles para exportar.");
+    return;
+  }
+
+  // Mapeo de datos para el reporte Excel
+  const datosExcel = registros.map(r => ({
+    "Cilindro": r.cilindro,
+    "Lote / Solicitud": r.lote_id || r.lote || '-',
+    "Fecha Envasado": r.fecha,
+    "Hora Inicio": r.hora_inicio || '-',
+    "Hora Fin": r.hora_fin || '-',
+    "Responsable": r.responsable || '-',
+    "Conductividad (µS/cm)": r.conductividad,
+    "Dureza (ppm)": r.dureza,
+    "pH": r.ph,
+    "Cloro (ppm)": r.cloro,
+    "Olor": r.olor,
+    "Color": r.color,
+    "Conforme": r.conforme ? 'SÍ' : 'NO',
+    "Estado Envío": r.enviado ? 'ENVIADO' : 'EN STOCK'
+  }));
+
+  // Crear hoja y libro de trabajo con XLSX
+  const worksheet = XLSX.utils.json_to_sheet(datosExcel);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Registros_Envasado");
+
+  // Descargar archivo .xlsx
+  const fechaHoy = new Date().toISOString().split('T')[0];
+  XLSX.writeFile(workbook, `Reporte_Envasado_Agua_${fechaHoy}.xlsx`);
 }
