@@ -149,39 +149,42 @@ async function guardarTokenEnSupabase(tokenFCM) {
   }
 }
 
-async function enviarNotificacionPushEdge(titulo, cuerpo) {
+// MIGRACIÓN A SUPABASE CLIENT FUNCTIONS INVOKE
+async function enviarNotificacionPushEdge(titulo, cuerpo, evento = 'GENERAL', record = {}) {
   try {
-    const respuesta = await fetch(`${SUPABASE_URL}/functions/v1/enviar-notificacion`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "apikey": SUPABASE_KEY,
-        "Authorization": `Bearer ${SUPABASE_KEY}`
-      },
-      body: JSON.stringify({
+    const { data, error } = await supabaseClient.functions.invoke('enviar-notificacion', {
+      body: {
         titulo: titulo,
         mensaje: cuerpo,
-        evento: titulo,
-        record: { detalle: cuerpo }
-      })
+        evento: evento,
+        record: {
+          operador: currentUser ? currentUser.nombre : 'Operador',
+          fecha: fechaSeleccionadaPanel || new Date().toISOString().split('T')[0],
+          hora: new Date().toLocaleTimeString('es-PE', { hour12: false }),
+          codigo_solicitud: solicitudSeleccionadaModal || record.id || '',
+          ...record
+        }
+      }
     });
 
-    if (!respuesta.ok) {
-      console.warn(`Edge function status: ${respuesta.status}`);
+    if (error) {
+      console.warn("Error al invocar Edge Function via Supabase SDK:", error.message);
+    } else {
+      console.log("Notificación push enviada con éxito:", data);
     }
   } catch (error) {
-    console.error("Error al invocarse la Edge Function de notificación:", error);
+    console.error("Error inesperado invocando Edge Function:", error);
   }
 }
 
-async function enviarNotificacionPush(titulo, cuerpo) {
+async function enviarNotificacionPush(titulo, cuerpo, evento = 'GENERAL', record = {}) {
   console.log(`[Notificación Push]: ${titulo} - ${cuerpo}`);
   
   if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
     new Notification(titulo, { body: cuerpo, icon: './icon-192.png' });
   }
 
-  await enviarNotificacionPushEdge(titulo, cuerpo);
+  await enviarNotificacionPushEdge(titulo, cuerpo, evento, record);
 }
 
 // ==========================================
@@ -487,7 +490,12 @@ async function crearSolicitudLote(e) {
   if (!error) {
     document.getElementById('sol-cilindros').value = '';
     document.getElementById('sol-fecha').value = '';
-    await enviarNotificacionPush("Nueva Solicitud de Envío", `Solicitud #${idSol} creada para ${fechaEntrega}`);
+    await enviarNotificacionPush(
+      "Nueva Solicitud de Envío", 
+      `Solicitud #${idSol} creada para ${fechaEntrega}`,
+      'NUEVA_SOLICITUD',
+      { codigo_solicitud: idSol, fecha: fechaEntrega }
+    );
     await cargarSolicitudesDesdeSupabase();
     actualizarUI();
   } else {
@@ -641,7 +649,12 @@ async function iniciarEnvasado() {
   actualizarEstadoBotonesEnvasado(true);
   actualizarCodigoCilindroFormulario();
 
-  await enviarNotificacionPush("Inicio de Envasado", `${currentUser.nombre} inició el envasado para la fecha ${fechaSeleccionadaPanel} a las ${ahora}`);
+  await enviarNotificacionPush(
+    "Envasado Iniciado", 
+    `${currentUser.nombre} inició el envasado para la fecha ${fechaSeleccionadaPanel} a las ${ahora}`,
+    'INICIO_ENVASADO',
+    { hora: ahora }
+  );
 }
 
 async function pausarEnvasado() {
@@ -649,7 +662,12 @@ async function pausarEnvasado() {
   estadoEnvasadoPausado = true;
   actualizarEstadoBotonesEnvasado(true);
 
-  await enviarNotificacionPush("Envasado Pausado", `${currentUser.nombre} pausó el envasado para la fecha ${fechaSeleccionadaPanel} a las ${ahora}`);
+  await enviarNotificacionPush(
+    "Envasado Pausado", 
+    `${currentUser.nombre} pausó el envasado para la fecha ${fechaSeleccionadaPanel} a las ${ahora}`,
+    'PAUSA_ENVASADO',
+    { hora: ahora }
+  );
 }
 
 async function reanudarEnvasado() {
@@ -662,7 +680,12 @@ async function reanudarEnvasado() {
   actualizarEstadoBotonesEnvasado(true);
   actualizarCodigoCilindroFormulario();
 
-  await enviarNotificacionPush("Envasado Reanudado", `${currentUser.nombre} reanudó el envasado para la fecha ${fechaSeleccionadaPanel} a las ${ahora}`);
+  await enviarNotificacionPush(
+    "Envasado Reanudado", 
+    `${currentUser.nombre} reanudó el envasado para la fecha ${fechaSeleccionadaPanel} a las ${ahora}`,
+    'REANUDAR_ENVASADO',
+    { hora: ahora }
+  );
 }
 
 async function finalizarEnvasado() {
@@ -682,7 +705,12 @@ async function finalizarEnvasado() {
   estadoEnvasadoPausado = false;
   actualizarEstadoBotonesEnvasado(false);
 
-  await enviarNotificacionPush("Finalización de Envasado", `Se finalizó el envasado para la fecha ${fechaSeleccionadaPanel} a las ${ahora}`);
+  await enviarNotificacionPush(
+    "Envasado Finalizado", 
+    `Se finalizó el envasado para la fecha ${fechaSeleccionadaPanel} a las ${ahora}`,
+    'FIN_ENVASADO',
+    { hora: ahora }
+  );
   
   await cargarRegistrosDesdeSupabase();
   renderTablaDia();
@@ -931,7 +959,12 @@ async function completarSolicitudConCilindros() {
       .eq('id', solicitudSeleccionadaModal);
 
     if (!error) {
-      await enviarNotificacionPush("Lote Listo para Verificación", `La solicitud #${solicitudSeleccionadaModal} pasó a estado En Verificación por el operador ${nombreUsuario}`);
+      await enviarNotificacionPush(
+        "Lote Listo para Verificación", 
+        `La solicitud #${solicitudSeleccionadaModal} pasó a estado En Verificación por el operador ${nombreUsuario}`,
+        'EN_VERIFICACION',
+        { codigo_solicitud: solicitudSeleccionadaModal }
+      );
       alert(`⏳ Solicitud #${solicitudSeleccionadaModal} enviada a Verificación por Calidad.`);
       cerrarModalSeleccionCilindros();
       await cargarSolicitudesDesdeSupabase();
@@ -1047,7 +1080,12 @@ async function darConformidadCalidad() {
       return;
     }
 
-    await enviarNotificacionPush("Conformidad Otorgada", `La solicitud #${solicitudSeleccionadaModal} fue verificada y liberada a las ${horaEnvio} por ${currentUser.nombre}`);
+    await enviarNotificacionPush(
+      "Conformidad Otorgada", 
+      `La solicitud #${solicitudSeleccionadaModal} fue verificada y liberada a las ${horaEnvio} por ${currentUser.nombre}`,
+      'VERIFICADO',
+      { codigo_solicitud: solicitudSeleccionadaModal, hora_envio: horaEnvio }
+    );
     alert(`✅ Lote #${solicitudSeleccionadaModal} verificado y liberado exitosamente.`);
 
     cerrarModalLote();
