@@ -19,17 +19,22 @@ firebase.initializeApp(firebaseConfig);
 // Inicializar el servicio de notificaciones
 const messaging = firebase.messaging();
 
-// Escuchar notificaciones entrantes cuando la app está en segundo plano
+// Escuchar notificaciones entrantes cuando la app está en segundo plano o cerrada
 messaging.onBackgroundMessage((payload) => {
   console.log('[firebase-messaging-sw.js] Notificación recibida en segundo plano:', payload);
 
-  const notificationTitle = payload.notification?.title || 'Notificación de Producción';
+  // Intentar obtener el título y mensaje de 'notification' o directamente de 'data'
+  const notificationTitle = payload.notification?.title || payload.data?.title || '💧 AGROMAR INDUSTRIAL';
+  const notificationBody = payload.notification?.body || payload.data?.body || 'Se ha registrado una nueva actualización.';
+
   const notificationOptions = {
-    body: payload.notification?.body || 'Tienes un nuevo aviso en el sistema.',
+    body: notificationBody,
     icon: './icon-192.png',
     badge: './icon-192.png',
+    vibrate: [100, 50, 100],
     data: {
-      url: self.location.origin
+      url: self.location.origin,
+      solicitud_id: payload.data?.solicitud_id || ''
     }
   };
 
